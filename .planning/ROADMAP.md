@@ -49,7 +49,10 @@ Plans:
   2. Each finding includes file:line, description, impact, current vs recommended defenses, and a suggested fix
   3. Kill-chain analysis tests whether each defense layer holds independently (not just presence-checking)
   4. The audit report is in PT-BR with clear, non-jargon language
-**Plans**: TBD
+**Plans:** 1 plan
+
+Plans:
+- [ ] 02-01-PLAN.md — Audit engine, report template, and kill-chain analysis methodology
 
 ### Phase 3: Secrets & Exposure Vectors
 **Goal**: The audit can detect secrets leaked in code, missing security headers, and CORS misconfigurations
@@ -160,7 +163,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Skill Router | 0/1 | Planning complete | - |
-| 2. Audit Mode Foundation | 0/0 | Not started | - |
+| 2. Audit Mode Foundation | 0/1 | Planning complete | - |
 | 3. Secrets & Exposure Vectors | 0/0 | Not started | - |
 | 4. Auth & Access Vectors | 0/0 | Not started | - |
 | 5. Injection Vectors | 0/0 | Not started | - |
