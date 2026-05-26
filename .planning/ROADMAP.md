@@ -35,7 +35,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. When a user says "audit this project" or "check security", Rock House routes to the correct mode
   3. Rock House loads only the modules relevant to the detected stack and requested mode (not all files at once)
   4. SKILL.md stays within 150 lines and uses progressive disclosure via file references
-**Plans**: TBD
+**Plans:** 1 plan
+
+Plans:
+- [ ] 01-01-PLAN.md — SKILL.md entry point with stack detection, mode routing, directory structure, and symlink setup
 
 ### Phase 2: Audit Mode Foundation
 **Goal**: Users can run a security audit on existing code and receive a structured report with findings graded by severity
@@ -156,7 +159,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Skill Router | 0/0 | Not started | - |
+| 1. Skill Router | 0/1 | Planning complete | - |
 | 2. Audit Mode Foundation | 0/0 | Not started | - |
 | 3. Secrets & Exposure Vectors | 0/0 | Not started | - |
 | 4. Auth & Access Vectors | 0/0 | Not started | - |
