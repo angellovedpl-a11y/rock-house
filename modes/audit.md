@@ -205,6 +205,29 @@ ALWAYS skip these directories and files during scanning:
 - `*.min.js`, `*.map`, `package-lock.json`, `yarn.lock`
 - `.env` — read for structure analysis ONLY, NEVER output contents
 
+### Documentation False-Positive Filter
+
+Findings in documentation files are NOT real vulnerabilities. When a Grep match
+lands in any of these file types, DISCARD IT — do not report as a finding:
+
+- `*.md` files (README, GABARITO, CHANGELOG, docs, planning artifacts)
+- `*.txt` files (notes, changelogs)
+- `*.example`, `*.sample`, `*.template` files
+- Files inside `docs/`, `.planning/`, `references/`, `examples/` directories
+
+**Why this matters:** Security skills, auditing tools, and testbed gabariots contain
+example patterns (regex, vulnerable code snippets, severity tables) that trigger the
+same scanners used to find real vulnerabilities. A reference to `eval(aiResponse)` in
+a markdown table describing a vulnerability is NOT the same as `eval(aiOutput)` in
+actual source code.
+
+**Rule:** Only flag findings in files that are EXECUTED or DEPLOYED — source code
+(`.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.sql`, `.html`, `.css`), configuration files
+(`.json`, `.yaml`, `.toml`, `.env`), and shell scripts (`.sh`, `.ps1`).
+
+Exception: `.env` files are flagged for structure/exposure analysis but their
+VALUES are never included in the report.
+
 ## Edge Cases
 
 ### Very large projects (50+ source files)

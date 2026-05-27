@@ -54,8 +54,14 @@ gitleaks detect --no-banner --report-format json --no-git
 
 Skip findings that match ANY of these conditions:
 - File path contains: `node_modules/`, `.git/`, `dist/`, `build/`, `vendor/`, `__pycache__/`
+- File extension is: `.md`, `.txt`, `.example`, `.sample`, `.template`
+- File path contains: `docs/`, `.planning/`, `references/`, `examples/`
 - Variable/key name contains: `ANON`, `PUBLIC`, `anon`, `public` (e.g. `NEXT_PUBLIC_SUPABASE_ANON_KEY`)
 - Finding is listed in `.gitleaksignore` file at project root
+
+Documentation files (markdown, text, examples) contain pattern descriptions, code
+snippets, and vulnerability references that are NOT real secrets. A regex pattern
+like `AKIA[0-9A-Z]{16}` written as an example in a `.md` file is not a leaked key.
 
 #### CRITICAL SAFETY RULE
 
@@ -124,6 +130,11 @@ NEXT_PUBLIC_.*(SERVICE|SECRET|PRIVATE|ADMIN|PASSWORD) # Next.js sensitive
 
 Apply the same false-positive filters as Gitleaks: skip `node_modules/`, `.git/`, `dist/`, `build/`,
 and skip variables with `ANON`/`PUBLIC`/`anon` in the name.
+
+**Documentation filter:** DISCARD any match found in `.md`, `.txt`, `.example`,
+`.sample`, or `.template` files, or inside `docs/`, `.planning/`, `references/`,
+`examples/` directories. These are descriptions of vulnerabilities, not actual secrets.
+Only flag matches in executable/deployed files (`.ts`, `.js`, `.py`, `.sql`, `.env`, `.json`, etc.).
 
 ### NEXT_PUBLIC_ Exposure
 
