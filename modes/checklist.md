@@ -32,6 +32,8 @@ For each risk category below, check ONLY the items relevant to the detected stac
 | 4 | Service key só no servidor | Supabase | Check service_role not in client code |
 | 5 | Lockfile commitado | Node.js, Python | Check package-lock.json or requirements.txt in git |
 
+**Automacao:** Items 1, 3, 4 are verified automatically via Gitleaks/regex scan and Grep.
+
 **Camadas independentes necessárias:** .gitignore + env vars no servidor + scan de secrets
 **Mínimo pra passar:** 2 camadas ✅
 
@@ -43,6 +45,9 @@ For each risk category below, check ONLY the items relevant to the detected stac
 | 7 | Queries parametrizadas | Node.js, Python, Supabase | No string concatenation in queries |
 | 8 | CSP header configurado | Todas | Content-Security-Policy present |
 | 9 | Output encoding/escape no render | React, Flask, HTML | React auto-escapes; check Flask templates |
+
+**Automacao:** Item 8 (CSP) is verified automatically via headers check.
+Items 6, 7, 9 are verified via code pattern scanning.
 
 **Camadas:** sanitização server + queries parametrizadas + CSP + output encoding
 **Mínimo pra passar:** 2 camadas ✅
@@ -82,6 +87,10 @@ For each risk category below, check ONLY the items relevant to the detected stac
 | 22 | CORS restritivo | Todas com API | Not `origin: *` |
 | 23 | Rate limiting geral | Todas com API | On API endpoints |
 
+**Automacao:** Items 19-22 are verified automatically via static config analysis.
+Note: For Vercel/Netlify projects, some headers are added by the platform.
+Use dynamic check (with URL) for accurate results.
+
 **Camadas:** HSTS + CSP + CORS + rate limit
 **Mínimo pra passar:** 2 camadas ✅
 
@@ -92,6 +101,9 @@ For each risk category below, check ONLY the items relevant to the detected stac
 | 24 | `npm audit` sem CVEs críticos | Node.js | Ask user to run npm audit |
 | 25 | `pip audit` sem CVEs críticos | Python | Ask user to run pip audit |
 | 26 | Versões pinadas | Todas | Lockfile + specific versions |
+
+**Automacao:** Items 24, 25 are verified automatically via npm audit / pip audit.
+Item 26 is verified via lockfile check.
 
 **Camadas:** audit limpo + lockfile + versões pinadas
 **Mínimo pra passar:** 2 camadas ✅
