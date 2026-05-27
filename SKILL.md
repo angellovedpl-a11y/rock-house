@@ -2,7 +2,7 @@
 name: rock-house
 description: "Security audit and defense-in-depth analysis for web projects. Use when the user asks to audit code security, check for vulnerabilities, review OWASP compliance, run a pre-deploy security checklist, or plan defenses before coding a new feature."
 when_to_use: "When user mentions: security audit, vulnerability scan, check security, OWASP, security headers, secrets in code, defense in depth, pre-deploy review, rock house, casa de pedra, auditoria de seguranca."
-allowed-tools: "Read Glob Grep"
+allowed-tools: "Read Glob Grep Bash"
 ---
 
 # Rock House — Security Defense in Depth
