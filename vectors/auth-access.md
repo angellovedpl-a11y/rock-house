@@ -301,3 +301,307 @@ class RegisterSchema(BaseModel):
     password: str
 # role, is_admin não estão no schema = ignorados
 ```
+
+---
+
+## VEC-AUTH-05: Insecure Password Storage
+
+### What to Look For
+
+Passwords stored with weak or no hashing are trivially cracked via rainbow tables
+or brute force. A senior attacker with a database dump cracks MD5/SHA in seconds.
+
+#### Dangerous patterns
+
+```javascript
+// Plaintext storage
+db.insert({ password: req.body.password })
+user.password = password
+
+// Weak hashing — crackable in seconds
+crypto.createHash('md5').update(password)
+crypto.createHash('sha1').update(password)
+crypto.createHash('sha256').update(password)  // fast hash = wrong for passwords
+hashlib.md5(password.encode())
+hashlib.sha1(password.encode())
+hashlib.sha256(password.encode())
+```
+
+#### What to search for (Grep patterns)
+
+```
+createHash.*md5
+createHash.*sha1
+createHash.*sha256
+hashlib.md5
+hashlib.sha1
+hashlib.sha256
+# Then check if context is password/credential storage
+```
+
+Also search for password fields stored without ANY hashing:
+
+```
+password: req.body.password
+password: password
+password = request.form
+# Direct assignment to database without hash call nearby
+```
+
+#### Safe patterns (NOT findings)
+
+```javascript
+// bcrypt — adaptive, slow by design
+const bcrypt = require('bcrypt');
+const hash = await bcrypt.hash(password, 12);
+
+// argon2 — winner of Password Hashing Competition
+const argon2 = require('argon2');
+const hash = await argon2.hash(password);
+
+// scrypt — built into Node crypto
+const { scrypt } = require('crypto');
+```
+
+```python
+# passlib with bcrypt/argon2
+from passlib.hash import bcrypt
+hash = bcrypt.hash(password)
+
+# werkzeug (Flask)
+from werkzeug.security import generate_password_hash
+hash = generate_password_hash(password, method='pbkdf2:sha256')
+```
+
+### Severity Assignment
+
+| Finding | Severity |
+|---------|----------|
+| Plaintext password stored in database | Critico |
+| MD5 hash on passwords | Critico |
+| SHA1 hash on passwords | Critico |
+| SHA256 without salt on passwords | Alto |
+| bcrypt with cost < 10 | Medio |
+| No password hashing library detected in auth flow | Alto |
+
+### Fix Suggestions
+
+```javascript
+// ❌ Errado — hash rapido = inseguro para passwords
+const hash = crypto.createHash('sha256').update(password).digest('hex');
+
+// ✅ Correto — bcrypt com cost 12
+const bcrypt = require('bcrypt');
+const SALT_ROUNDS = 12;
+const hash = await bcrypt.hash(password, SALT_ROUNDS);
+const isValid = await bcrypt.compare(inputPassword, storedHash);
+
+// ✅ Ainda melhor — argon2id (estado da arte)
+const argon2 = require('argon2');
+const hash = await argon2.hash(password, { type: argon2.argon2id });
+const isValid = await argon2.verify(storedHash, inputPassword);
+```
+
+---
+
+## VEC-AUTH-06: Insecure Randomness
+
+### What to Look For
+
+`Math.random()` is NOT cryptographically secure. Using it for tokens, IDs, or
+anything security-sensitive allows attackers to predict values.
+
+#### Dangerous patterns
+
+```javascript
+// Math.random for security-sensitive values
+const token = Math.random().toString(36)
+const resetCode = Math.floor(Math.random() * 999999)
+const sessionId = 'sess_' + Math.random()
+const apiKey = [...Array(32)].map(() => Math.random().toString(36)[2]).join('')
+const otp = String(Math.random()).slice(2, 8)
+```
+
+```python
+# random module (NOT secure)
+import random
+token = random.randint(100000, 999999)
+code = ''.join(random.choices(string.ascii_letters, k=32))
+```
+
+#### What to search for (Grep patterns)
+
+```
+Math.random
+# Then check if result is used for: token, session, key, code, otp, reset, verify, id, nonce, salt
+random.randint
+random.choice
+random.random
+# Same — check if security context
+```
+
+#### Safe patterns (NOT findings)
+
+```javascript
+// crypto.randomUUID — Node 19+
+const id = crypto.randomUUID();
+
+// crypto.randomBytes — all Node versions
+const token = crypto.randomBytes(32).toString('hex');
+
+// crypto.getRandomValues — browser + Node
+const array = new Uint8Array(32);
+crypto.getRandomValues(array);
+```
+
+```python
+# secrets module (Python 3.6+)
+import secrets
+token = secrets.token_hex(32)
+otp = secrets.randbelow(1000000)
+```
+
+### Severity Assignment
+
+| Finding | Severity |
+|---------|----------|
+| Math.random for auth tokens / session IDs | Critico |
+| Math.random for password reset codes | Critico |
+| Math.random for API keys or OTPs | Alto |
+| Math.random for non-security IDs (display only) | Baixo |
+| random module (Python) for tokens | Alto |
+
+### Fix Suggestions
+
+```javascript
+// ❌ Errado — previsivel
+const resetToken = Math.random().toString(36).slice(2);
+
+// ✅ Correto — criptograficamente seguro
+const crypto = require('crypto');
+const resetToken = crypto.randomBytes(32).toString('hex');
+// Ou: crypto.randomUUID() para IDs
+```
+
+---
+
+## VEC-AUTH-07: Missing Input Validation (Schema)
+
+### What to Look For
+
+API endpoints that accept user input without schema validation (Zod, Joi, yup,
+Pydantic) allow unexpected data types, extra fields, and malformed payloads.
+This is the root cause of many other vulnerabilities (mass assignment, injection, prototype pollution).
+
+#### Dangerous patterns
+
+```javascript
+// Direct use of req.body without validation
+app.post('/api/users', async (req, res) => {
+  const user = await db.users.create(req.body);
+});
+
+// Destructuring without type/shape validation
+const { email, password } = req.body;
+// email could be an object, array, number — not validated
+
+// Next.js API route without validation
+export async function POST(req: NextRequest) {
+  const data = await req.json();
+  await db.insert(data);
+}
+```
+
+```python
+# Flask without schema validation
+@app.route('/api/users', methods=['POST'])
+def create_user():
+    data = request.json
+    db.execute("INSERT INTO users ...", data)
+```
+
+#### What to search for (Grep patterns)
+
+First, check if a validation library is installed:
+
+```
+# package.json — look for ANY of these
+"zod"
+"joi"
+"yup"
+"ajv"
+"class-validator"
+"superstruct"
+
+# requirements.txt / pyproject.toml
+pydantic
+marshmallow
+cerberus
+```
+
+If NONE found: flag as Alto — "Nenhuma biblioteca de validacao de input detectada."
+
+Then check each API route handler for validation before database/business logic:
+
+```
+// Search for route handlers
+app.post(
+app.put(
+app.patch(
+app.delete(
+export async function POST
+export async function PUT
+export async function PATCH
+export async function DELETE
+
+// In each, check if req.body / req.json() goes through schema validation
+// before being used in db operations
+```
+
+#### Safe patterns (NOT findings)
+
+```javascript
+// Zod validation at the boundary
+const CreateUserSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+});
+const validated = CreateUserSchema.parse(req.body);
+
+// Joi
+const schema = Joi.object({ email: Joi.string().email().required() });
+const { value, error } = schema.validate(req.body);
+```
+
+### Severity Assignment
+
+| Finding | Severity |
+|---------|----------|
+| No validation library in project dependencies | Alto |
+| API endpoint with req.body passed directly to DB | Alto |
+| Destructured req.body used without type validation | Medio |
+| Validation exists but only on some endpoints | Medio |
+
+### Fix Suggestions
+
+```javascript
+// ❌ Errado — input direto sem validacao
+export async function POST(req: NextRequest) {
+  const data = await req.json();
+  await supabase.from('users').insert(data);
+}
+
+// ✅ Correto — Zod no boundary
+import { z } from 'zod';
+const CreateUserSchema = z.object({
+  name: z.string().min(1).max(100),
+  email: z.string().email(),
+  password: z.string().min(8).max(128),
+});
+
+export async function POST(req: NextRequest) {
+  const raw = await req.json();
+  const data = CreateUserSchema.parse(raw);
+  await supabase.from('users').insert(data);
+}
+```

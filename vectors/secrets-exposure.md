@@ -211,6 +211,158 @@ git rm --cached .env
 
 ---
 
+## VEC-SEC-01b: Error Disclosure & Debug Mode
+
+### What to Look For
+
+Stack traces, debug modes, and verbose error messages in production leak internal
+paths, library versions, database schemas, and query structures — giving attackers
+a detailed map of the application.
+
+#### Debug mode enabled
+
+```javascript
+// Express debug in production
+app.set('env', 'development')
+// or: NODE_ENV not set (defaults to development)
+
+// Next.js — check if dev mode flags leak
+// next.config.js with reactStrictMode is fine, but check for:
+devIndicators: { buildActivity: true }  // visible in prod = info leak
+
+// Flask debug mode
+app.run(debug=True)
+FLASK_DEBUG=1
+FLASK_ENV=development
+```
+
+#### What to search for (Grep patterns)
+
+```
+NODE_ENV.*development
+NODE_ENV.*dev
+debug.*true
+debug.*True
+FLASK_DEBUG
+FLASK_ENV.*development
+app.run(debug
+DEBUG\s*=\s*True
+DEBUG\s*=\s*true
+```
+
+Then check if this is production config (not just local dev scripts).
+
+#### Stack traces sent to client
+
+```javascript
+// Express — error handler that leaks stack
+app.use((err, req, res, next) => {
+  res.status(500).json({ error: err.message, stack: err.stack });
+});
+
+// Unhandled errors that fall through to default Express handler
+// Default Express handler shows stack in development mode
+
+// Next.js — custom error pages that expose details
+// pages/_error.js or app/error.tsx that renders err.message
+```
+
+```python
+# Flask — traceback visible in browser
+# Default behavior when debug=True
+
+# Django — DEBUG=True in settings.py shows full traceback
+DEBUG = True
+```
+
+#### Verbose error messages
+
+```javascript
+// Database errors forwarded to client
+catch (err) {
+  res.json({ error: err.message });  // may contain SQL, table names, column names
+}
+
+// Authentication errors that leak info
+if (!user) return res.json({ error: 'User not found' });       // reveals user exists
+if (!valid) return res.json({ error: 'Wrong password' });      // confirms user exists
+// vs safe: "Invalid credentials" for both cases
+```
+
+#### What to search for (Grep patterns)
+
+```
+err\.message
+err\.stack
+error\.message
+error\.stack
+traceback
+res.json.*err
+res.send.*err
+# Then check if these reach the client response
+```
+
+For account enumeration:
+```
+[Uu]ser not found
+[Uu]suario nao encontrado
+[Ee]mail not found
+[Ee]mail nao encontrado
+[Ww]rong password
+[Ss]enha incorreta
+# Different messages for "not found" vs "wrong password" = enumeration
+```
+
+### Severity Assignment
+
+| Finding | Severity |
+|---------|----------|
+| DEBUG=True / debug mode in production config | Alto |
+| Stack trace sent in error response | Alto |
+| Database error messages forwarded to client | Medio |
+| Different error messages for user-not-found vs wrong-password | Medio |
+| NODE_ENV not explicitly set to production | Medio |
+| Verbose error logging to client-visible output | Medio |
+
+### Fix Suggestions
+
+```javascript
+// ❌ Errado — stack trace no response
+app.use((err, req, res, next) => {
+  res.status(500).json({ error: err.message, stack: err.stack });
+});
+
+// ✅ Correto — mensagem generica pro client, detalhes no log
+app.use((err, req, res, next) => {
+  console.error(err);  // log interno — visivel so no servidor
+  res.status(500).json({ error: 'Erro interno do servidor' });
+});
+
+// ✅ Auth sem enumeration
+// ❌ "Usuario nao encontrado" / "Senha incorreta"
+// ✅ "Credenciais invalidas" (mesma mensagem pra ambos)
+```
+
+```python
+# ❌ Errado — debug em producao
+app.run(debug=True)
+
+# ✅ Correto
+app.run(debug=False)
+# Ou via env var: FLASK_DEBUG=0
+```
+
+```javascript
+// ✅ Garantir NODE_ENV em producao
+// package.json
+"scripts": {
+  "start": "NODE_ENV=production node server.js"
+}
+// Ou no Dockerfile / Vercel / hosting config
+```
+
+---
+
 ## VEC-SEC-02: Security Headers
 
 ### What to Look For

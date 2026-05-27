@@ -142,10 +142,56 @@ boostrap     → should be bootstrap
 
 Any match → Alto finding: "Possivel typosquatting: [found] → voce quis dizer [correct]?"
 
+#### 3d. Malicious Install Scripts
+
+Check `package.json` of the project AND key dependencies for lifecycle scripts
+that execute code during `npm install`:
+
+```json
+"scripts": {
+  "preinstall": "...",
+  "install": "...",
+  "postinstall": "..."
+}
+```
+
+These scripts run automatically with full system access during installation.
+Compromised packages use them to exfiltrate env vars, install backdoors, or
+download payloads.
+
+**What to search for:**
+
+In project `package.json`:
+```
+"preinstall"
+"postinstall"
+```
+
+If found, read the script content. Flag if it:
+- Downloads from external URLs (`curl`, `wget`, `fetch`, `http.get`)
+- Reads environment variables (`process.env`, `$ENV`)
+- Writes to directories outside the project (`/tmp`, `/etc`, `$HOME`)
+- Executes obfuscated code (base64 decode, eval of hex strings)
+
+In `node_modules/` — do NOT scan entire node_modules (too slow), but check the
+project's DIRECT dependencies that are less-known (< 1 year old, single maintainer,
+no README). Read their `package.json` for install scripts.
+
+**Also check for:**
+
+```
+"scripts": {
+  "prepare": "..."  // runs on install from git
+}
+```
+
 ### Severity Assignment
 
 | Finding | Severity | Check |
 |---------|----------|-------|
+| Install script downloading external payload | Critico | — |
+| Install script reading env vars | Alto | — |
+| Install script with obfuscated code | Critico | — |
 | npm audit critical CVE | Critico | D2 FAIL |
 | Known compromised package | Critico | D3 FAIL |
 | npm audit high CVE | Alto | — |

@@ -104,7 +104,7 @@ Nenhuma vulnerabilidade foi encontrada com os modulos de vetor disponiveis. Isso
 
 ## Score Calculation — Deterministic Binary Checks
 
-The score is calculated from 35 binary checks (pass/fail). Checks not applicable
+The score is calculated from 44 binary checks (pass/fail). Checks not applicable
 to the detected stack are REMOVED from the total (not counted as pass or fail).
 
 ### Check Registry
@@ -118,6 +118,8 @@ to the detected stack are REMOVED from the total (not counted as pass or fail).
 | S3 | .env in .gitignore | .gitignore contains .env* pattern |
 | S4 | NEXT_PUBLIC_ safe only | No NEXT_PUBLIC_ with SERVICE/SECRET/PRIVATE/ADMIN |
 | S5 | No private keys in repo | No -----BEGIN PRIVATE KEY patterns found |
+| S6 | No debug mode in production config | No DEBUG=True, NODE_ENV=development in prod files |
+| S7 | No stack traces sent to client | Error handlers return generic messages, not err.stack |
 
 #### INJECTION (weight 2x — avg CVSS 8.6)
 
@@ -128,6 +130,8 @@ to the detected stack are REMOVED from the total (not counted as pass or fail).
 | I3 | No dangerouslySetInnerHTML with user input | No unsanitized dangerouslySetInnerHTML |
 | I4 | No eval with external input | No eval()/setTimeout()/setInterval() with user data |
 | I5 | CSP header configured | Content-Security-Policy found in config or headers |
+| I6 | No prototype pollution | No _.merge/_.defaultsDeep with user input, no __proto__ |
+| I7 | No ReDoS via user input | No new RegExp(userInput) without escaping |
 
 #### AUTH & ACCESS (weight 2x — avg CVSS 8.0)
 
@@ -138,6 +142,9 @@ to the detected stack are REMOVED from the total (not counted as pass or fail).
 | A3 | Ownership check on ID endpoints | Endpoints with params.id include user_id/auth check |
 | A4 | JWT with expiration | All jwt.sign() calls include expiresIn |
 | A5 | Cookies with HttpOnly+Secure+SameSite | Cookie config includes all three flags |
+| A6 | Passwords hashed with bcrypt/argon2 | No MD5/SHA1/SHA256/plaintext for password storage |
+| A7 | Crypto-secure randomness for tokens | No Math.random() for tokens/sessions/keys/OTPs |
+| A8 | Input validation at API boundaries | Zod/Joi/yup/Pydantic on route handlers processing user input |
 
 #### SUPPLY CHAIN (weight 1x — avg CVSS 6.5)
 
@@ -147,6 +154,7 @@ to the detected stack are REMOVED from the total (not counted as pass or fail).
 | D2 | No critical audit CVEs | npm audit --json reports 0 critical |
 | D3 | No compromised packages | No packages from compromised list found |
 | D4 | Versions pinned | No "*", "latest", or ">=" in dependencies |
+| D5 | No suspicious install scripts | No preinstall/postinstall downloading external payloads |
 
 #### HEADERS (weight 1x — avg CVSS 5.3)
 
@@ -214,10 +222,10 @@ After all findings, present the score table:
 
 | Categoria | Checks | Passaram | Peso | Pontos |
 |-----------|--------|----------|------|--------|
-| Secrets | [N/5] | [n] | 3x | [n x 3] / [N x 3] |
-| Injection | [N/5] | [n] | 2x | [n x 2] / [N x 2] |
-| Auth | [N/5] | [n] | 2x | [n x 2] / [N x 2] |
-| Supply | [N/4] | [n] | 1x | [n x 1] / [N x 1] |
+| Secrets | [N/7] | [n] | 3x | [n x 3] / [N x 3] |
+| Injection | [N/7] | [n] | 2x | [n x 2] / [N x 2] |
+| Auth | [N/8] | [n] | 2x | [n x 2] / [N x 2] |
+| Supply | [N/5] | [n] | 1x | [n x 1] / [N x 1] |
 | Headers | [N/5] | [n] | 1x | [n x 1] / [N x 1] |
 | Network | [N/4] | [n] | 2x | [n x 2] / [N x 2] |
 | AI | [N/4] | [n] | 2x | [n x 2] / [N x 2] |

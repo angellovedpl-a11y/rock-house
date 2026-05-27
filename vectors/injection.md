@@ -98,6 +98,184 @@ import DOMPurify from 'dompurify';
 
 ---
 
+## VEC-INJ-01b: Prototype Pollution
+
+### What to Look For
+
+Prototype pollution occurs when an attacker can inject properties into `Object.prototype`,
+affecting ALL objects in the application. This can lead to RCE, auth bypass, or DoS.
+
+#### Dangerous patterns
+
+```javascript
+// Deep merge without prototype check
+_.merge(target, userInput)
+_.defaultsDeep(target, userInput)
+Object.assign({}, req.body)      // shallow — less dangerous but still risky
+lodash.set(obj, req.body.path, req.body.value)  // path-based injection
+
+// JSON.parse with __proto__
+JSON.parse('{"__proto__": {"isAdmin": true}}')
+
+// Recursive merge functions (custom or from libs)
+function merge(target, source) {
+  for (let key in source) {
+    target[key] = source[key];  // no __proto__ check
+  }
+}
+
+// Query string parsers that create nested objects
+// ?__proto__[isAdmin]=true  →  qs.parse creates __proto__ key
+```
+
+#### What to search for (Grep patterns)
+
+```
+_.merge(
+_.defaultsDeep(
+lodash.merge(
+lodash.defaultsDeep(
+lodash.set(
+Object.assign(
+__proto__
+constructor.prototype
+```
+
+Then check if ANY of those receive user input (req.body, req.query, req.params, formData).
+
+#### Safe patterns (NOT findings)
+
+```javascript
+// Object.create(null) — no prototype chain
+const obj = Object.create(null);
+
+// Explicit key whitelist before merge
+const { name, email } = req.body;
+Object.assign(user, { name, email });
+
+// Libraries with prototype pollution protection
+// structuredClone() — safe deep clone (Node 17+)
+const safe = structuredClone(userInput);
+```
+
+### Severity Assignment
+
+| Finding | Severity |
+|---------|----------|
+| _.merge / _.defaultsDeep with user input | Critico |
+| lodash.set with user-controlled path | Critico |
+| Recursive custom merge with no __proto__ guard | Alto |
+| Object.assign with full req.body | Alto |
+| JSON.parse of user input without schema validation | Medio |
+
+### Fix Suggestions
+
+```javascript
+// ❌ Errado — merge profundo com input do usuario
+const config = _.merge({}, defaults, req.body);
+
+// ✅ Correto — whitelist de campos + schema validation
+import { z } from 'zod';
+const ConfigSchema = z.object({ theme: z.string(), lang: z.string() });
+const validated = ConfigSchema.parse(req.body);
+const config = { ...defaults, ...validated };
+
+// ✅ Se precisa de deep merge, proteger contra __proto__
+function safeMerge(target, source) {
+  for (const key of Object.keys(source)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+    if (typeof source[key] === 'object' && source[key] !== null) {
+      target[key] = safeMerge(target[key] || {}, source[key]);
+    } else {
+      target[key] = source[key];
+    }
+  }
+  return target;
+}
+```
+
+---
+
+## VEC-INJ-01c: ReDoS (Regular Expression Denial of Service)
+
+### What to Look For
+
+ReDoS happens when a user-controlled string is tested against a regex with
+catastrophic backtracking. The event loop freezes, causing DoS.
+
+#### Dangerous regex patterns (with user input)
+
+```javascript
+// Nested quantifiers — exponential backtracking
+/^(a+)+$/               // "aaaaaaaaaaaaaaaaX" → hangs
+/(.*a){x}/              // nested .* with repetition
+/([a-zA-Z]+)*$/         // character class with outer quantifier
+
+// Common vulnerable patterns in real code
+new RegExp(userInput)                        // user controls the entire regex
+new RegExp('.*' + userInput + '.*')          // user input in regex
+str.match(new RegExp(req.query.search))      // search feature with regex
+str.replace(new RegExp(userInput, 'g'), '') // sanitization via user regex
+```
+
+#### What to search for (Grep patterns)
+
+```
+new RegExp(.*req\.
+new RegExp(.*query
+new RegExp(.*body
+new RegExp(.*param
+new RegExp(.*input
+new RegExp(.*search
+```
+
+Then verify the regex source includes user input.
+
+#### Safe patterns (NOT findings)
+
+```javascript
+// Escaped user input in regex
+const escaped = userInput.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+new RegExp(escaped);
+
+// String methods instead of regex for simple search
+str.includes(userInput);
+str.indexOf(userInput);
+
+// Regex with timeout (Node 20+)
+// No native support yet — use re2 library for safe regex
+```
+
+### Severity Assignment
+
+| Finding | Severity |
+|---------|----------|
+| new RegExp(userInput) without escaping | Alto |
+| Nested quantifiers on user-facing input | Alto |
+| User input in regex replacement | Medio |
+
+### Fix Suggestions
+
+```javascript
+// ❌ Errado — usuario controla o regex
+app.get('/search', (req, res) => {
+  const results = items.filter(i => i.name.match(new RegExp(req.query.q)));
+});
+
+// ✅ Correto — escape antes de usar como regex
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+const results = items.filter(i => i.name.match(new RegExp(escapeRegex(req.query.q))));
+
+// ✅ Melhor ainda — usar includes() se nao precisa de regex
+const results = items.filter(i =>
+  i.name.toLowerCase().includes(req.query.q.toLowerCase())
+);
+```
+
+---
+
 ## VEC-INJ-02: SQL / NoSQL Injection
 
 ### What to Look For
