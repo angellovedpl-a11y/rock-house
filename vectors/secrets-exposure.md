@@ -4,39 +4,128 @@ Detects leaked secrets, missing security headers, and CORS misconfigurations.
 
 ## VEC-SEC-01: Secrets in Code
 
-### What to Look For
+### Primary: Gitleaks Scan
 
-Search project files for hardcoded secrets using these patterns:
+Gitleaks is the recommended tool for secrets detection. It covers 100+ secret patterns
+including git history scanning, which regex alone cannot do reliably.
 
-#### API Keys and Tokens (Grep patterns)
+#### Detection Flow
 
-```
-# AWS
-AKIA[0-9A-Z]{16}
-aws_secret_access_key\s*=\s*["\'][^"\']+
+1. **Check if Gitleaks is available:**
 
-# OpenAI
-sk-[a-zA-Z0-9]{48}
+```bash
+# Linux/Mac
+which gitleaks
 
-# Stripe
-sk_live_[a-zA-Z0-9]{24}
-sk_test_[a-zA-Z0-9]{24}
-rk_live_[a-zA-Z0-9]{24}
-
-# Supabase service role key
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+
-
-# Firebase
-AIza[0-9A-Za-z_-]{35}
-
-# Generic patterns
-(api[_-]?key|apikey|secret[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\s*[:=]\s*["\'][a-zA-Z0-9_\-./+=]{8,}
-
-# Passwords
-(password|passwd|pwd|senha)\s*[:=]\s*["\'][^"\']{4,}
+# Windows
+where.exe gitleaks
 ```
 
-#### NEXT_PUBLIC_ Exposure
+2. **If NOT found:** ask the user:
+
+> Gitleaks nao foi encontrado no PATH.
+> Quer instalar Gitleaks? (recomendado)
+> - Sim → executar `scripts/install-gitleaks.sh` (Linux/Mac) ou `scripts/install-gitleaks.ps1` (Windows)
+> - Nao → usar fallback com regex patterns (cobertura limitada, sem scan de historico)
+
+3. **If found (or after install):** run current-files scan:
+
+```bash
+gitleaks detect --no-banner --report-format json
+```
+
+4. **Check if `.git` directory exists:**
+   - **If `.git` exists:** also run history scan (60s timeout):
+
+```bash
+# Full git history scan — may take time on large repos
+timeout 60 gitleaks detect --no-banner --report-format json --log-opts="--all"
+```
+
+   - **If `.git` does NOT exist:** warn user and run with `--no-git`:
+
+> ⚠ Diretorio .git nao encontrado. Scan de historico indisponivel.
+
+```bash
+gitleaks detect --no-banner --report-format json --no-git
+```
+
+#### Filtering False Positives
+
+Skip findings that match ANY of these conditions:
+- File path contains: `node_modules/`, `.git/`, `dist/`, `build/`, `vendor/`, `__pycache__/`
+- Variable/key name contains: `ANON`, `PUBLIC`, `anon`, `public` (e.g. `NEXT_PUBLIC_SUPABASE_ANON_KEY`)
+- Finding is listed in `.gitleaksignore` file at project root
+
+#### CRITICAL SAFETY RULE
+
+> **NEVER copy the `match` field from Gitleaks JSON output.**
+> The `match` field contains the ACTUAL SECRET VALUE.
+> Only use these safe fields: `file`, `startLine`, `endLine`, `rule`, `description`, `author`, `date`, `commit`.
+> When reporting findings, show rule name + file + line — never the matched content.
+
+#### Severity Mapping (Gitleaks → Rock House)
+
+| Gitleaks Severity | Rock House Level | Emoji |
+|-------------------|------------------|-------|
+| critical | Critico | 🔴 |
+| high | Alto | 🟠 |
+| medium | Medio | 🟡 |
+| low | Baixo | 🟢 |
+
+### Fallback: Regex Patterns
+
+Used when Gitleaks is not installed and user declines installation.
+
+> ⚠ Scan de historico git indisponivel sem Gitleaks. Apenas arquivos atuais serao verificados.
+
+#### All 30 Patterns
+
+```
+# Cloud providers
+AKIA[0-9A-Z]{16}                              # AWS Access Key
+aws_secret_access_key\s*=\s*["'][^"']+         # AWS Secret
+AIza[0-9A-Za-z_-]{35}                          # Google/Firebase API Key
+
+# Code platforms
+ghp_[a-zA-Z0-9]{36}                            # GitHub PAT
+gho_[a-zA-Z0-9]{36}                            # GitHub OAuth
+github_pat_[a-zA-Z0-9_]{82}                    # GitHub fine-grained PAT
+glpat-[a-zA-Z0-9_-]{20}                        # GitLab PAT
+
+# Payment
+sk_live_[a-zA-Z0-9]{24,}                       # Stripe live secret
+rk_live_[a-zA-Z0-9]{24,}                       # Stripe restricted
+
+# AI providers
+sk-[a-zA-Z0-9]{48,}                            # OpenAI
+sk-ant-[a-zA-Z0-9_-]{90,}                      # Anthropic
+
+# Communication
+xoxb-[0-9]{10,}-[a-zA-Z0-9-]+                  # Slack bot
+xoxp-[0-9]{10,}-[a-zA-Z0-9-]+                  # Slack user
+SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}      # SendGrid
+key-[a-f0-9]{32}                                # Mailgun
+
+# Infrastructure
+SK[a-f0-9]{32}                                  # Twilio
+mongodb(\+srv)?://[^:]+:[^@]+@                  # MongoDB connection string
+postgres(ql)?://[^:]+:[^@]+@                    # PostgreSQL connection string
+mysql://[^:]+:[^@]+@                            # MySQL connection string
+redis://:[^@]+@                                 # Redis connection string
+
+# Auth/Crypto
+-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY # Private keys
+(password|passwd|pwd|senha)\s*[:=]\s*["'][^"']{4,}  # Passwords
+
+# Client-side exposure
+NEXT_PUBLIC_.*(SERVICE|SECRET|PRIVATE|ADMIN|PASSWORD) # Next.js sensitive
+```
+
+Apply the same false-positive filters as Gitleaks: skip `node_modules/`, `.git/`, `dist/`, `build/`,
+and skip variables with `ANON`/`PUBLIC`/`anon` in the name.
+
+### NEXT_PUBLIC_ Exposure
 
 Search for environment variables with `NEXT_PUBLIC_` prefix that expose sensitive data:
 
@@ -50,7 +139,7 @@ NEXT_PUBLIC_.*TOKEN(?!.*anon)
 
 Any `NEXT_PUBLIC_` variable is exposed in the client-side JavaScript bundle. Only public-safe values should use this prefix.
 
-#### .env Files in Git
+### .env Files in Git
 
 Check if `.env` files are tracked by git:
 - Run: `git ls-files | grep -i '\.env'`
@@ -59,29 +148,22 @@ Check if `.env` files are tracked by git:
 
 Even if .env is now gitignored, it may exist in git history.
 
-#### Hardcoded in Comments
-
-Search for secrets accidentally left in comments:
-```
-// password: 
-// secret: 
-// key: 
-# TODO: remove this key
-// temporary credentials
-```
-
 ### Severity Assignment
 
-| Finding | Severity |
-|---------|----------|
-| Live API key (AWS, Stripe sk_live, production tokens) | 🔴 Crítico |
-| NEXT_PUBLIC_ with service role key | 🔴 Crítico |
-| .env committed to git (current) | 🔴 Crítico |
-| .env in git history only | 🟠 Alto |
-| Test/dev API key exposed | 🟠 Alto |
-| Password in code comment | 🟠 Alto |
-| Generic secret pattern (may be false positive) | 🟡 Médio |
-| Missing .gitignore for .env | 🟡 Médio |
+| Finding | Source | Severity |
+|---------|--------|----------|
+| Live API key (AWS, Stripe sk_live, production tokens) | Gitleaks or Fallback | 🔴 Critico |
+| Secret found in git history | Gitleaks only | 🔴 Critico |
+| NEXT_PUBLIC_ with service role key | Gitleaks or Fallback | 🔴 Critico |
+| .env committed to git (current) | Gitleaks or Fallback | 🔴 Critico |
+| Private key file detected | Gitleaks or Fallback | 🔴 Critico |
+| .env in git history only | Gitleaks only | 🟠 Alto |
+| Test/dev API key exposed | Gitleaks or Fallback | 🟠 Alto |
+| Password in code or comment | Gitleaks or Fallback | 🟠 Alto |
+| Database connection string with credentials | Gitleaks or Fallback | 🟠 Alto |
+| Generic secret pattern (may be false positive) | Fallback only | 🟡 Medio |
+| Missing .gitignore for .env | Gitleaks or Fallback | 🟡 Medio |
+| Low-confidence pattern match | Fallback only | 🟢 Baixo |
 
 ### Fix Suggestions
 
