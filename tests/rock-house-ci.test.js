@@ -19,6 +19,7 @@ function run() {
   testCriticalSuppressionsBlockedByDefault();
   testBaselineFailOnNewOnly();
   testScannerArtifactsAreIgnored();
+  testEscapedInnerHtmlDoesNotCreateFinding();
   testMissingPathErrors();
   testMissingConfigErrors();
   testInvalidConfigErrors();
@@ -84,6 +85,28 @@ function testScannerArtifactsAreIgnored() {
   assert.strictEqual(result.status, 0, result.stdout + result.stderr);
   const report = readJson(output);
   assert.strictEqual(report.findings.some((finding) => finding.file === 'rock-house-report.json'), false, 'scanner output artifacts must not be scanned');
+}
+
+function testEscapedInnerHtmlDoesNotCreateFinding() {
+  const fixture = makeTempProject('rock-house-innerhtml-');
+  writeFile(fixture, 'static/app.js', [
+    'function escapeHtml(s) { return String(s).replace(/[&<>]/g, ""); }',
+    'function renderSafe(user) {',
+    '  document.getElementById("safe").innerHTML = `<div>${escapeHtml(user.name)}</div>`;',
+    '}',
+    'function renderUnsafe(user) {',
+    '  document.getElementById("unsafe").innerHTML = `<div>${user.name}</div>`;',
+    '}'
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-innerhtml-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+  const report = readJson(output);
+  const i2Findings = report.findings.filter((finding) => finding.checkId === 'I2');
+  assert.strictEqual(i2Findings.length, 1, 'only unescaped innerHTML should be reported');
+  assert.strictEqual(i2Findings[0].line, 6);
 }
 
 function testSuppressionsAreAudited() {

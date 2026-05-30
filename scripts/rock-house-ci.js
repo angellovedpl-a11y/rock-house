@@ -9,6 +9,7 @@ const {
   readBoolean,
   resolveConfigPath
 } = require('./lib/config');
+const { shouldFlagInnerHtml } = require('./lib/js-detection');
 const { toMarkdown, toSarif } = require('./lib/report-formatters');
 const { impactFor, ruleFor } = require('./lib/rules');
 
@@ -213,7 +214,7 @@ function scanFiles(files) {
         addFinding('Critico', 'I3', 'Injection', rel, lineNumber, 'React dangerouslySetInnerHTML can create XSS if content is user-controlled.', 'Render text normally or sanitize HTML with a reviewed sanitizer.');
       }
 
-      if (/\binnerHTML\s*=/.test(line)) {
+      if (shouldFlagInnerHtml(lines, index)) {
         addFinding('Alto', 'I2', 'Injection', rel, lineNumber, 'innerHTML assignment can create DOM XSS.', 'Use textContent or sanitize trusted HTML before inserting it.');
       }
 
