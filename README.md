@@ -4,16 +4,19 @@
 
 Security audit and defense-in-depth skill for [Claude Code](https://claude.ai/code). Analyzes web projects for vulnerabilities using independent defense layers — inspired by the Three Little Pigs.
 
+Rock House is an internal security gate. It raises the assurance level of a project by collecting evidence, blocking unsafe deploys, and showing what is still unknown. It does not replace pentesting, production monitoring, or expert review for high-risk systems.
+
 ## What It Does
 
-Rock House scans your code for 15 attack vectors across 5 categories, tests if your defenses hold independently (kill-chain analysis), and generates a severity-graded report in Portuguese (PT-BR).
+Rock House scans your code for attack vectors across 5 categories, tests if your defenses hold independently (kill-chain analysis), and generates a severity-graded report in Portuguese (PT-BR).
 
-**3 modes:**
+**4 modes:**
+- `/rock-house certify` — strict evidence gate for deploy approval/blocking
 - `/rock-house audit` — scan existing code for vulnerabilities
 - `/rock-house checklist` — pre-deploy security gate
 - `/rock-house preventive [feature]` — defense plan BEFORE coding
 
-**15 attack vectors:**
+**Attack vectors:**
 
 | Category | Vectors |
 |----------|---------|
@@ -30,7 +33,7 @@ HTML/JS, Next.js/React, Supabase/PostgreSQL, Flask/Python, Infrastructure
 
 ```bash
 # Clone to a local directory
-git clone https://github.com/angellovedpl/rock-house.git ~/Documents/rock-house
+git clone https://github.com/angellovedpl-a11y/rock-house.git ~/Documents/rock-house
 
 # Create junction/symlink so Claude Code discovers it
 # Windows (no admin needed):
@@ -48,11 +51,160 @@ Open any project in Claude Code, then:
 
 ```
 audit this project for security       → runs Audit mode
+certify this project before deploy    → runs Certify mode
 run security checklist before deploy  → runs Checklist mode
 plan defenses for login feature       → runs Preventive mode
 ```
 
-Or invoke directly: `/rock-house audit`
+Or invoke directly: `/rock-house certify`
+
+## Demo Target
+
+The repository includes a deliberately vulnerable demo app:
+
+```text
+examples/vulnerable-next-supabase/
+```
+
+Run Rock House against that directory to verify the gate catches deploy-blocking
+issues such as service-role exposure, IDOR, XSS, open CORS, missing lockfile, and
+error disclosure.
+
+## CI / GitHub Action
+
+Use Rock House as a PR gate:
+
+```yaml
+name: Security
+
+on:
+  pull_request:
+
+jobs:
+  rock-house:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: angellovedpl-a11y/rock-house@v0
+        with:
+          path: .
+          config: rock-house.config.json
+          min-level: prata
+          output: rock-house-report.json
+          sarif: rock-house.sarif
+          markdown: rock-house-summary.md
+          baseline: rock-house-baseline.json
+          fail-on-new-only: 'false'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rock-house-report
+          path: |
+            rock-house-report.json
+            rock-house.sarif
+            rock-house-summary.md
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: rock-house.sarif
+```
+
+Local CI scanner:
+
+```bash
+node scripts/rock-house-ci.js \
+  --path examples/vulnerable-next-supabase \
+  --min-level prata \
+  --output rock-house-report.json \
+  --sarif rock-house.sarif \
+  --markdown rock-house-summary.md
+```
+
+The CI scanner is dependency-free and intentionally conservative. It catches
+high-signal deploy blockers, writes JSON/SARIF/Markdown reports, and adds a
+GitHub Step Summary automatically when running inside Actions. The interactive
+skill provides the deeper evidence review.
+
+Each CI finding includes rule metadata:
+
+- OWASP Top 10 / OWASP API category when applicable
+- CWE IDs
+- help URL
+- stable fingerprint for baseline comparison
+
+Optional project config:
+
+```json
+{
+  "path": ".",
+  "minLevel": "prata",
+  "output": "rock-house-report.json",
+  "sarif": "rock-house.sarif",
+  "markdown": "rock-house-summary.md",
+  "baseline": "rock-house-baseline.json",
+  "failOnNewOnly": false,
+  "exclude": ["docs", "examples", "coverage"],
+  "allowCriticalSuppressions": false,
+  "suppressions": [
+    {
+      "checkId": "D4",
+      "path": "package.json",
+      "reason": "Temporary false positive while migrating dependency policy.",
+      "expires": "2026-12-31"
+    }
+  ]
+}
+```
+
+Use it locally:
+
+```bash
+node scripts/rock-house-ci.js --config rock-house.config.json
+```
+
+Precedence: CLI flags and Action inputs override config values; config values
+override defaults.
+
+Suppressions are audited in the JSON and Markdown reports. Each suppression must
+include a `reason`. Critical findings cannot be suppressed unless
+`allowCriticalSuppressions` is explicitly set to `true`.
+
+Baseline mode lets existing repositories adopt Rock House gradually:
+
+```bash
+node scripts/rock-house-ci.js --path . --output rock-house-baseline.json
+```
+
+Then configure:
+
+```json
+{
+  "baseline": "rock-house-baseline.json",
+  "failOnNewOnly": true
+}
+```
+
+Known findings remain visible and marked as baseline. `failOnNewOnly` only changes
+the CI gate decision; it does not mean baseline findings are safe.
+
+You can also use baseline without a config file:
+
+```bash
+node scripts/rock-house-ci.js \
+  --path . \
+  --baseline rock-house-baseline.json \
+  --fail-on-new-only true
+```
+
+Invalid config blocks the scanner before analysis starts. Rock House rejects
+unknown config keys, invalid `minLevel`, wrong value types, suppressions without
+`reason`, invalid suppression severity, and invalid expiration dates.
+
+Run the scanner tests:
+
+```bash
+node tests/rock-house-ci.test.js
+```
 
 ## Score System
 
@@ -65,7 +217,14 @@ Every audit produces a 0-10 score:
 | 7-8 | Stone House | Solid defense — wolf can't get in |
 | 9-10 | Fortress | Defense in depth — not even with dynamite |
 
-**Deploy safe: score >= 7 (stone house)**
+**Internal gate:** deploy decisions depend on score, open findings, and confidence:
+
+| Level | Meaning |
+|-------|---------|
+| Bloqueado | Do not deploy: critical risk, low score, or too much unknown evidence |
+| Bronze | Preview/staging only |
+| Prata | Production allowed with monitoring |
+| Ouro | Production gate passed with high confidence |
 
 ## Kill-Chain Analysis
 
@@ -80,10 +239,16 @@ Rock House doesn't just check if defenses exist — it tests if each layer holds
 ```
 rock-house/
 ├── SKILL.md              # Entry point (101 lines)
+├── action.yml            # GitHub Action entry point
+├── .github/
+│   └── workflows/
+│       └── ci.yml        # Self-test workflow
 ├── modes/
+│   ├── certify.md        # Strict evidence-based deploy gate
 │   ├── audit.md           # 7-step audit engine
 │   ├── checklist.md       # Pre-deploy gate (30 items)
 │   ├── preventive.md      # Defense planning tables
+│   ├── evidence-pack.md   # Evidence format and UNKNOWN rules
 │   ├── report-template.md # Report format spec
 │   └── kill-chain.md      # Independence testing methodology
 ├── vectors/
@@ -104,10 +269,20 @@ rock-house/
 │   ├── defense-in-depth.md # Theory + examples
 │   └── operational.md     # WAF, MFA, logs guide
 ├── scripts/
-│   ├── scan-secrets.sh    # Secret scanner (Bash)
-│   ├── scan-secrets.ps1   # Secret scanner (PowerShell)
-│   ├── audit-deps.sh      # Dependency auditor
-│   └── check-headers.sh   # Security headers checker
+│   ├── rock-house-ci.js  # Dependency-free JSON security gate for CI
+│   ├── lib/
+│   │   ├── config.js     # CLI/config parsing and validation
+│   │   ├── report-formatters.js # Markdown and SARIF output
+│   │   └── rules.js      # Rule metadata and severity impact
+│   ├── install-gitleaks.sh # Gitleaks installer (Bash)
+│   ├── install-gitleaks.ps1 # Gitleaks installer (PowerShell)
+│   ├── check-headers.sh   # Security headers checker
+│   └── check-headers.ps1  # Security headers checker (PowerShell)
+├── examples/
+│   ├── rock-house.config.json # Example scanner config
+│   └── vulnerable-next-supabase/ # Demo app with intentional vulnerabilities
+├── tests/
+│   └── rock-house-ci.test.js # Dependency-free scanner tests
 └── README.md
 ```
 
@@ -122,4 +297,4 @@ MIT
 
 ## Author
 
-Angelo Silva — [@angellovedpl](https://github.com/angellovedpl)
+Angelo Silva — [@angellovedpl-a11y](https://github.com/angellovedpl-a11y)
