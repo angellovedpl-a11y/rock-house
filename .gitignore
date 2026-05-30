@@ -1,0 +1,21 @@
+# Rock House generated reports
+rock-house-report.json
+rock-house-baseline.json
+rock-house.sarif
+rock-house-summary.md
+
+# Dependency/build artifacts
+node_modules/
+dist/
+build/
+.next/
+coverage/
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# OS/editor noise
+.DS_Store
+Thumbs.db

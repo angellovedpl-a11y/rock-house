@@ -1,0 +1,21 @@
+{
+  "path": ".",
+  "minLevel": "prata",
+  "output": "rock-house-report.json",
+  "sarif": "rock-house.sarif",
+  "markdown": "rock-house-summary.md",
+  "exclude": [
+    "docs",
+    "examples",
+    "coverage"
+  ],
+  "allowCriticalSuppressions": false,
+  "suppressions": [
+    {
+      "checkId": "D4",
+      "path": "package.json",
+      "reason": "Example only: dependency pinning is demonstrated in CI docs.",
+      "expires": "2026-12-31"
+    }
+  ]
+}

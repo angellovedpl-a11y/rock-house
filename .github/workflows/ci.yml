@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Test Rock House CI scanner
+        run: node tests/rock-house-ci.test.js
+      - name: Verify vulnerable demo blocks
+        run: |
+          set +e
+          node scripts/rock-house-ci.js \
+            --path examples/vulnerable-next-supabase \
+            --min-level prata \
+            --output "$RUNNER_TEMP/rock-house-vulnerable.json"
+          status=$?
+          if [ "$status" -eq 0 ]; then
+            echo "Expected vulnerable demo to be blocked"
+            exit 1
+          fi
+          node -e "const r=require(process.env.RUNNER_TEMP + '/rock-house-vulnerable.json'); if (r.result !== 'blocked') process.exit(1)"
