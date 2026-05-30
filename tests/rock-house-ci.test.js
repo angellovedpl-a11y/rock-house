@@ -30,6 +30,8 @@ async function run() {
   await testDastAdvancedProbes();
   testHighRiskWithoutAssuranceBlocks();
   await testHighRiskAssuranceUsesDastEvidence();
+  testExpiredStructuredApprovalBlocks();
+  testInvalidStructuredApprovalErrors();
   testMissingPathErrors();
   testMissingConfigErrors();
   testInvalidConfigErrors();
@@ -324,7 +326,15 @@ async function testHighRiskAssuranceUsesDastEvidence() {
   writeFile(fixture, 'instrumentation.ts', 'import * as Sentry from "@sentry/nextjs";\nSentry.init({ dsn: process.env.SENTRY_DSN });');
   writeFile(fixture, 'assurance.json', JSON.stringify({
     review: { completed: true, reviewer: 'security-team', date: '2026-05-30' },
-    approval: { humanApproved: true, approver: 'release-manager', date: '2026-05-30' }
+    approval: {
+      schemaVersion: 1,
+      status: 'approved',
+      approver: 'release-manager',
+      date: '2026-05-30',
+      environment: 'production',
+      scope: 'payments rollout',
+      reference: 'CR-2026-051'
+    }
   }, null, 2));
   writeFile(fixture, 'observability.json', JSON.stringify({
     auditLogs: true,
@@ -364,6 +374,96 @@ async function testHighRiskAssuranceUsesDastEvidence() {
   } finally {
     await closeServer(server.instance);
   }
+}
+
+function testExpiredStructuredApprovalBlocks() {
+  const fixture = makeTempProject('rock-house-expired-approval-');
+  writeFile(fixture, 'package.json', JSON.stringify({
+    name: 'expired-approval-fixture',
+    private: true
+  }, null, 2));
+  writeFile(fixture, 'package-lock.json', JSON.stringify({
+    name: 'expired-approval-fixture',
+    lockfileVersion: 3,
+    packages: {}
+  }, null, 2));
+  writeFile(fixture, 'app/api/payments/route.ts', 'export async function POST() { return Response.json({ ok: true }); }');
+  writeFile(fixture, 'assurance.json', JSON.stringify({
+    dynamicTesting: { completed: true, environment: 'staging', date: '2026-05-30' },
+    monitoring: { errorTracking: true, auditLogs: true, alerts: true, healthChecks: true },
+    review: { completed: true, reviewer: 'security-team', date: '2026-05-30' },
+    approval: {
+      schemaVersion: 1,
+      status: 'approved',
+      approver: 'release-manager',
+      date: '2026-05-30',
+      environment: 'production',
+      scope: 'payments rollout',
+      reference: 'CR-2026-052',
+      expires: '2026-05-29'
+    }
+  }, null, 2));
+
+  const output = path.join(fixture, 'report.json');
+  const configPath = path.join(fixture, 'rock-house.config.json');
+  writeFile(fixture, 'rock-house.config.json', JSON.stringify({
+    path: fixture,
+    minLevel: 'bronze',
+    output,
+    riskProfile: 'high',
+    assurance: path.join(fixture, 'assurance.json')
+  }, null, 2));
+
+  const result = spawnSync(process.execPath, [scanner, '--config', configPath], {
+    cwd: repoRoot,
+    encoding: 'utf8'
+  });
+
+  assert.notStrictEqual(result.status, 0, 'expired approval should fail high-risk certification');
+  const report = readJson(output);
+  assert(report.findings.some((finding) => finding.checkId === 'R4'), 'expired structured approval must fail R4');
+}
+
+function testInvalidStructuredApprovalErrors() {
+  const fixture = makeTempProject('rock-house-invalid-approval-');
+  writeFile(fixture, 'package.json', JSON.stringify({
+    name: 'invalid-approval-fixture',
+    private: true
+  }, null, 2));
+  writeFile(fixture, 'package-lock.json', JSON.stringify({
+    name: 'invalid-approval-fixture',
+    lockfileVersion: 3,
+    packages: {}
+  }, null, 2));
+  writeFile(fixture, 'assurance.json', JSON.stringify({
+    monitoring: { errorTracking: true, auditLogs: true, alerts: true, healthChecks: true },
+    review: { completed: true, reviewer: 'security-team', date: '2026-05-30' },
+    approval: {
+      schemaVersion: 1,
+      status: 'approved',
+      approver: 'release-manager',
+      date: '2026-05-30',
+      environment: 'production',
+      scope: 'payments rollout'
+    }
+  }, null, 2));
+
+  const output = path.join(fixture, 'report.json');
+  const configPath = path.join(fixture, 'rock-house.config.json');
+  writeFile(fixture, 'rock-house.config.json', JSON.stringify({
+    path: fixture,
+    minLevel: 'bronze',
+    output,
+    riskProfile: 'high',
+    assurance: path.join(fixture, 'assurance.json')
+  }, null, 2));
+
+  const result = spawnSync(process.execPath, [scanner, '--config', configPath], {
+    cwd: repoRoot,
+    encoding: 'utf8'
+  });
+
+  assert.strictEqual(result.status, 2, 'invalid structured approval should fail fast');
 }
 
 function testSuppressionsAreAudited() {

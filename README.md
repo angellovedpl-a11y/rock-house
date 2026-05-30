@@ -204,15 +204,23 @@ Example assurance file:
     "date": "2026-05-30"
   },
   "approval": {
-    "humanApproved": true,
+    "schemaVersion": 1,
+    "status": "approved",
     "approver": "release-manager",
-    "date": "2026-05-30"
+    "date": "2026-05-30",
+    "environment": "production",
+    "scope": "payments rollout",
+    "reference": "CR-2026-051",
+    "expires": "2026-06-30"
   }
 }
 ```
 
 When `riskProfile` is `high`, Rock House blocks certification if dynamic testing,
 runtime monitoring, specialized review, or human approval evidence is missing.
+The approval evidence is now structured and versioned so the gate can audit who
+approved the deploy, for which environment/scope, under which change reference,
+and until when that approval remains valid.
 
 When `dast.url` or the Action input `dast-url` is configured, Rock House performs
 live HTTP checks against localhost or staging and can report runtime findings such

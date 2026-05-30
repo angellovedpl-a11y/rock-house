@@ -30,15 +30,13 @@ function validateAssurance(value, file, fail) {
 
   validateBooleanSection(value.dynamicTesting, ['completed'], 'dynamicTesting', file, fail);
   validateBooleanSection(value.review, ['completed'], 'review', file, fail);
-  validateBooleanSection(value.approval, ['humanApproved'], 'approval', file, fail);
+  validateApproval(value.approval, file, fail);
   validateBooleanSection(value.monitoring, ['errorTracking', 'auditLogs', 'alerts', 'healthChecks'], 'monitoring', file, fail);
 
   validateOptionalString(value.dynamicTesting, 'environment', 'dynamicTesting', file, fail);
   validateOptionalString(value.review, 'reviewer', 'review', file, fail);
-  validateOptionalString(value.approval, 'approver', 'approval', file, fail);
   validateOptionalDate(value.dynamicTesting, 'date', 'dynamicTesting', file, fail);
   validateOptionalDate(value.review, 'date', 'review', file, fail);
-  validateOptionalDate(value.approval, 'date', 'approval', file, fail);
 }
 
 function validateBooleanSection(section, keys, name, file, fail) {
@@ -71,6 +69,49 @@ function failAssurance(message, fail) {
   const error = new Error(message);
   error.code = 'ROCK_HOUSE_ASSURANCE';
   fail(message);
+}
+
+function validateApproval(section, file, fail) {
+  if (section === undefined) return;
+  if (!section || typeof section !== 'object' || Array.isArray(section)) {
+    failAssurance(`Assurance section "approval" must be an object in ${file}`, fail);
+  }
+
+  if ('humanApproved' in section) {
+    validateBooleanSection(section, ['humanApproved'], 'approval', file, fail);
+    validateOptionalString(section, 'approver', 'approval', file, fail);
+    validateOptionalDate(section, 'date', 'approval', file, fail);
+    return;
+  }
+
+  const allowed = new Set(['schemaVersion', 'status', 'approver', 'date', 'environment', 'scope', 'reference', 'expires']);
+  for (const key of Object.keys(section)) {
+    if (!allowed.has(key)) {
+      failAssurance(`Unknown approval field "${key}" in ${file}`, fail);
+    }
+  }
+
+  if (section.schemaVersion !== 1) {
+    failAssurance(`Assurance field "approval.schemaVersion" must be 1 in ${file}`, fail);
+  }
+
+  if (section.status !== 'approved') {
+    failAssurance(`Assurance field "approval.status" must be "approved" in ${file}`, fail);
+  }
+
+  for (const key of ['approver', 'environment', 'scope', 'reference']) {
+    if (!section[key] || typeof section[key] !== 'string') {
+      failAssurance(`Assurance field "approval.${key}" must be a non-empty string in ${file}`, fail);
+    }
+  }
+
+  if (!section.date || typeof section.date !== 'string' || Number.isNaN(new Date(section.date).getTime())) {
+    failAssurance(`Assurance field "approval.date" must be a valid date string in ${file}`, fail);
+  }
+
+  if (section.expires !== undefined && (typeof section.expires !== 'string' || Number.isNaN(new Date(section.expires).getTime()))) {
+    failAssurance(`Assurance field "approval.expires" must be a valid date string in ${file}`, fail);
+  }
 }
 
 function evaluateAssurance(options) {
@@ -138,12 +179,12 @@ function evaluateAssurance(options) {
     gates
   });
 
-  evaluateBooleanRequirement(assurance.approval?.humanApproved, {
+  evaluateBooleanRequirement(isApprovalAccepted(assurance.approval), {
     checkId: 'R4',
     file: evidenceRef,
     description: 'High-risk project is missing human approval evidence for deploy.',
-    recommendation: 'Attach explicit human approval evidence in the assurance bundle before deploy.',
-    passNote: `Human approval evidence present${assurance.approval?.approver ? ` (${assurance.approval.approver})` : ''}.`,
+    recommendation: 'Attach explicit human approval evidence with approver, date, environment, scope, reference, and validity in the assurance bundle before deploy.',
+    passNote: approvalPassNote(assurance.approval),
     addFinding,
     gates
   });
@@ -185,6 +226,29 @@ function hasMonitoringCoverage(monitoring) {
     && monitoring.auditLogs === true
     && monitoring.alerts === true
     && monitoring.healthChecks === true;
+}
+
+function isApprovalAccepted(approval) {
+  if (!approval || typeof approval !== 'object') return false;
+  if ('humanApproved' in approval) return approval.humanApproved === true;
+  if (approval.schemaVersion !== 1) return false;
+  if (approval.status !== 'approved') return false;
+  if (approval.expires && new Date(approval.expires).getTime() < Date.now()) return false;
+  return true;
+}
+
+function approvalPassNote(approval) {
+  if (!approval || typeof approval !== 'object') return 'Human approval evidence present.';
+  if ('humanApproved' in approval) {
+    return `Human approval evidence present${approval.approver ? ` (${approval.approver})` : ''}.`;
+  }
+  const details = [
+    approval.approver,
+    approval.environment,
+    approval.scope,
+    approval.reference
+  ].filter(Boolean).join(', ');
+  return `Human approval evidence present${details ? ` (${details})` : ''}.`;
 }
 
 module.exports = {
