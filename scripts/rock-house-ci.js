@@ -11,6 +11,7 @@ const {
 } = require('./lib/config');
 const { evaluateAssurance, loadAssurance } = require('./lib/assurance');
 const { runDast } = require('./lib/dast');
+const { evaluateObservability, resolveObservabilityConfig } = require('./lib/observability');
 const { shouldFlagInnerHtml } = require('./lib/js-detection');
 const { toMarkdown, toSarif } = require('./lib/report-formatters');
 const { impactFor, ruleFor } = require('./lib/rules');
@@ -30,6 +31,7 @@ const markdownPath = markdownInput ? path.resolve(markdownInput) : '';
 const minLevel = (args['min-level'] || process.env.INPUT_MIN_LEVEL || config.minLevel || 'prata').toLowerCase();
 const riskProfile = String(args['risk-profile'] || process.env.INPUT_RISK_PROFILE || config.riskProfile || 'standard').toLowerCase();
 const dast = resolveDastConfig(args, config);
+const observability = resolveObservabilityConfig(args, config);
 const extraExclude = Array.isArray(config.exclude) ? config.exclude.map(normalizePath) : [];
 const suppressions = Array.isArray(config.suppressions) ? config.suppressions : [];
 const allowCriticalSuppressions = config.allowCriticalSuppressions === true;
@@ -38,12 +40,14 @@ const baselinePath = baselineInput ? path.resolve(baselineInput) : '';
 const assuranceInput = args.assurance || process.env.INPUT_ASSURANCE || config.assurance;
 const assurancePath = assuranceInput ? path.resolve(assuranceInput) : '';
 const assurance = loadAssurance(assurancePath, fail);
+const observabilityEvidencePath = observability?.evidence ? path.resolve(observability.evidence) : '';
 const baselineFingerprints = loadBaseline(baselinePath);
 const failOnNewOnly = readBoolean(args['fail-on-new-only'], process.env.INPUT_FAIL_ON_NEW_ONLY, config.failOnNewOnly);
 const annotationsEnabled = readBoolean(args.annotations, process.env.INPUT_ANNOTATIONS, config.annotations, true);
 const scannerArtifactPaths = new Set([
   configPath,
   assurancePath,
+  observabilityEvidencePath,
   outputPath,
   sarifPath,
   markdownPath,
@@ -85,6 +89,7 @@ async function main() {
   const packageJsonPath = path.join(targetRoot, 'package.json');
   const hasPackageJson = fs.existsSync(packageJsonPath);
   const hasGit = fs.existsSync(path.join(targetRoot, '.git'));
+  const observabilityReport = evaluateObservability({ targetRoot, files, packageJsonPath, observability, fail });
 
   scanFiles(files);
   scanPackageJson(packageJsonPath, hasPackageJson);
@@ -97,6 +102,8 @@ async function main() {
     riskProfile,
     dynamicTestingCompleted: dastReport.executed,
     dynamicTestingEvidence: dastReport.executed ? `Dynamic DAST completed against ${dastReport.url}.` : '',
+    monitoringCoverage: observabilityReport.coverage,
+    monitoringEvidence: observabilityReport.note,
     addFinding,
     gates
   });
@@ -129,6 +136,7 @@ async function main() {
       file: assurancePath || null
     },
     dast: dastReport,
+    observability: observabilityReport,
     result,
     certification,
     score,

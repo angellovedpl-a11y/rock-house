@@ -252,7 +252,10 @@ async function testHighRiskAssuranceUsesDastEvidence() {
   const fixture = makeTempProject('rock-house-high-risk-assurance-');
   writeFile(fixture, 'package.json', JSON.stringify({
     name: 'high-risk-assurance-fixture',
-    private: true
+    private: true,
+    dependencies: {
+      '@sentry/nextjs': '^8.0.0'
+    }
   }, null, 2));
   writeFile(fixture, 'package-lock.json', JSON.stringify({
     name: 'high-risk-assurance-fixture',
@@ -260,10 +263,15 @@ async function testHighRiskAssuranceUsesDastEvidence() {
     packages: {}
   }, null, 2));
   writeFile(fixture, 'app/api/payments/route.ts', 'export async function POST() { return Response.json({ ok: true }); }');
+  writeFile(fixture, 'app/api/health/route.ts', 'export async function GET() { return Response.json({ ok: true }); }');
+  writeFile(fixture, 'instrumentation.ts', 'import * as Sentry from "@sentry/nextjs";\nSentry.init({ dsn: process.env.SENTRY_DSN });');
   writeFile(fixture, 'assurance.json', JSON.stringify({
-    monitoring: { errorTracking: true, auditLogs: true, alerts: true, healthChecks: true },
     review: { completed: true, reviewer: 'security-team', date: '2026-05-30' },
     approval: { humanApproved: true, approver: 'release-manager', date: '2026-05-30' }
+  }, null, 2));
+  writeFile(fixture, 'observability.json', JSON.stringify({
+    auditLogs: true,
+    alerts: true
   }, null, 2));
 
   const output = path.join(fixture, 'report.json');
@@ -274,6 +282,9 @@ async function testHighRiskAssuranceUsesDastEvidence() {
     output,
     riskProfile: 'high',
     assurance: path.join(fixture, 'assurance.json'),
+    observability: {
+      evidence: path.join(fixture, 'observability.json')
+    },
     dast: {
       url: server.url,
       paths: ['/'],
@@ -288,8 +299,11 @@ async function testHighRiskAssuranceUsesDastEvidence() {
   assert.strictEqual(report.result, 'passed');
   assert.strictEqual(report.riskProfile, 'high');
   assert.strictEqual(report.assurance.file, path.join(fixture, 'assurance.json'));
+  assert.strictEqual(report.observability.evidenceFile, path.join(fixture, 'observability.json'));
+  assert.deepStrictEqual(report.observability.providers, ['sentry']);
   assert.strictEqual(report.findings.some((finding) => /^R[0-4]$/.test(finding.checkId)), false, 'assurance findings should not exist when bundle is complete');
   assert(report.gates.some((gate) => gate.id === 'R1' && gate.status === 'PASS'), 'dynamic testing gate should pass');
+  assert(report.gates.some((gate) => gate.id === 'R2' && gate.status === 'PASS'), 'monitoring gate should pass');
   } finally {
     await closeServer(server.instance);
   }
@@ -523,6 +537,8 @@ function testInvalidConfigErrors() {
   assertInvalidConfig({ dast: true }, 'dast must be object');
   assertInvalidConfig({ dast: { url: 123 } }, 'dast url must be string');
   assertInvalidConfig({ dast: { url: 'http://127.0.0.1:3000', timeoutMs: 0 } }, 'dast timeout must be positive');
+  assertInvalidConfig({ observability: true }, 'observability must be object');
+  assertInvalidConfig({ observability: { evidence: true } }, 'observability evidence must be string');
   assertInvalidConfig({ exclude: 'docs' }, 'exclude must be array of strings');
   assertInvalidConfig({ allowCriticalSuppressions: 'yes' }, 'allowCriticalSuppressions must be boolean');
   assertInvalidConfig({ failOnNewOnly: 'yes' }, 'failOnNewOnly must be boolean');

@@ -80,6 +80,8 @@ function evaluateAssurance(options) {
     riskProfile,
     dynamicTestingCompleted,
     dynamicTestingEvidence,
+    monitoringCoverage,
+    monitoringEvidence,
     addFinding,
     gates
   } = options;
@@ -116,12 +118,12 @@ function evaluateAssurance(options) {
     gates
   });
 
-  evaluateBooleanRequirement(hasMonitoringCoverage(assurance.monitoring), {
+  evaluateBooleanRequirement(hasMonitoringCoverage(assurance.monitoring) || hasMonitoringCoverage(monitoringCoverage), {
     checkId: 'R2',
     file: evidenceRef,
     description: 'High-risk project is missing runtime monitoring evidence (error tracking, audit logs, alerts, or health checks).',
     recommendation: 'Provide monitoring evidence showing error tracking, audit logs, alerts, and health checks.',
-    passNote: 'Runtime monitoring evidence present.',
+    passNote: monitoringEvidence || 'Runtime monitoring evidence present.',
     addFinding,
     gates
   });

@@ -18,6 +18,7 @@ function toMarkdown(report) {
     `**Perfil de risco:** \`${report.riskProfile}\``,
     report.assurance.file ? `**Assurance:** \`${report.assurance.file}\`` : '',
     report.dast.configured ? `**DAST:** \`${report.dast.url}\` (${report.dast.executed ? 'executado' : 'nao executado'})` : '',
+    report.observability.configured ? `**Observability:** ${report.observability.note}` : '',
     report.baseline.path ? `**Baseline:** \`${report.baseline.path}\` (${report.baseline.matched} conhecidos, ${report.baseline.new} novos)` : '',
     '',
     statusLine,

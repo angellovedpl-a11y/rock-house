@@ -95,6 +95,7 @@ jobs:
           markdown: rock-house-summary.md
           dast-url: http://127.0.0.1:3000
           dast-paths: /,/api/health
+          observability-evidence: rock-house-observability.json
           baseline: rock-house-baseline.json
           fail-on-new-only: 'false'
       - uses: actions/upload-artifact@v4
@@ -145,6 +146,9 @@ Optional project config:
     "url": "http://127.0.0.1:3000",
     "paths": ["/", "/api/health"],
     "timeoutMs": 5000
+  },
+  "observability": {
+    "evidence": "rock-house-observability.json"
   },
   "output": "rock-house-report.json",
   "sarif": "rock-house.sarif",
@@ -208,6 +212,12 @@ When `dast.url` or the Action input `dast-url` is configured, Rock House perform
 live HTTP checks against localhost or staging and can report runtime findings such
 as wildcard CORS, missing CSP, missing `nosniff`, server header disclosure, and
 stack traces in 5xx responses.
+
+When `observability.evidence` or the Action input `observability-evidence` is
+configured, Rock House combines that operational evidence with code-level
+detection for providers such as Sentry, Datadog, and OpenTelemetry. This lets
+high-risk gates satisfy monitoring requirements with real integration evidence
+instead of a manual boolean-only declaration.
 
 Use it locally:
 
@@ -334,6 +344,7 @@ rock-house/
 │   │   ├── config.js     # CLI/config parsing and validation
 │   │   ├── dast.js       # Dynamic localhost/staging HTTP checks
 │   │   ├── js-detection.js # JavaScript sink detection helpers
+│   │   ├── observability.js # Runtime monitoring evidence adapters
 │   │   ├── report-formatters.js # Markdown and SARIF output
 │   │   ├── rules.js      # Rule metadata and severity impact
 │   │   └── supply-chain-detection.js # Package manager evidence checks

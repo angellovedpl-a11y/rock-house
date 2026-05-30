@@ -10,6 +10,7 @@ const CONFIG_KEYS = new Set([
   'riskProfile',
   'assurance',
   'dast',
+  'observability',
   'exclude',
   'allowCriticalSuppressions',
   'suppressions',
@@ -103,6 +104,10 @@ function validateConfig(configValue, file) {
     validateDast(configValue.dast, file);
   }
 
+  if (configValue.observability !== undefined) {
+    validateObservability(configValue.observability, file);
+  }
+
   if (configValue.exclude !== undefined) {
     validateStringArray(configValue.exclude, 'exclude', file);
   }
@@ -192,6 +197,23 @@ function validateDast(value, file) {
     if (typeof value.timeoutMs !== 'number' || !Number.isFinite(value.timeoutMs) || value.timeoutMs <= 0) {
       throwUsageError(`Config key "dast.timeoutMs" must be a positive number in ${file}`);
     }
+  }
+}
+
+function validateObservability(value, file) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throwUsageError(`Config key "observability" must be an object in ${file}`);
+  }
+
+  const allowed = new Set(['evidence']);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throwUsageError(`Unknown observability key "${key}" in ${file}`);
+    }
+  }
+
+  if (!value.evidence || typeof value.evidence !== 'string') {
+    throwUsageError(`Config key "observability.evidence" must be a non-empty string in ${file}`);
   }
 }
 

@@ -39,6 +39,10 @@ inputs:
     description: Optional timeout in milliseconds for each dynamic HTTP request.
     required: false
     default: ''
+  observability-evidence:
+    description: Optional JSON evidence file for runtime alerts and audit logging coverage.
+    required: false
+    default: ''
   baseline:
     description: Optional previous Rock House JSON report used as baseline.
     required: false
