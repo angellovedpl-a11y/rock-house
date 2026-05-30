@@ -12,6 +12,7 @@ const {
 const { shouldFlagInnerHtml } = require('./lib/js-detection');
 const { toMarkdown, toSarif } = require('./lib/report-formatters');
 const { impactFor, ruleFor } = require('./lib/rules');
+const { scanPnpmWorkspace } = require('./lib/supply-chain-detection');
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -54,7 +55,7 @@ const SOURCE_EXTENSIONS = new Set([
 ]);
 
 const EXCLUDED_DIRS = new Set([
-  '.git', 'node_modules', 'dist', 'build', '.next', 'coverage',
+  '.git', 'node_modules', 'dist', 'build', '.next', 'coverage', 'artifacts',
   '__pycache__', 'venv', '.venv'
 ]);
 
@@ -78,6 +79,7 @@ function main() {
   scanFiles(files);
   scanPackageJson(packageJsonPath, hasPackageJson);
   scanLockfile(hasPackageJson);
+  scanPnpmWorkspace(targetRoot, hasPackageJson, addFinding);
 
   if (!hasGit) {
     addUnknown('S2', 'Secrets', 'No .git directory found; git history scan unavailable.', 'Run in a git checkout and run Gitleaks history scan.', 'Ouro');

@@ -19,7 +19,9 @@ function run() {
   testCriticalSuppressionsBlockedByDefault();
   testBaselineFailOnNewOnly();
   testScannerArtifactsAreIgnored();
+  testGeneratedArtifactsDirectoryIsIgnored();
   testEscapedInnerHtmlDoesNotCreateFinding();
+  testMalformedPnpmWorkspaceIsReported();
   testMissingPathErrors();
   testMissingConfigErrors();
   testInvalidConfigErrors();
@@ -87,6 +89,27 @@ function testScannerArtifactsAreIgnored() {
   assert.strictEqual(report.findings.some((finding) => finding.file === 'rock-house-report.json'), false, 'scanner output artifacts must not be scanned');
 }
 
+function testGeneratedArtifactsDirectoryIsIgnored() {
+  const fixture = makeTempProject('rock-house-generated-artifacts-');
+  writeFile(fixture, 'artifacts/mockup-sandbox/app/page.tsx', [
+    'export default function Page() {',
+    '  return <div dangerouslySetInnerHTML={{ __html: "<b>x</b>" }} />;',
+    '}'
+  ].join('\n'));
+  writeFile(fixture, 'app/page.tsx', [
+    'export default function Page() {',
+    '  return <div>ok</div>;',
+    '}'
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-generated-artifacts-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+  const report = readJson(output);
+  assert.strictEqual(report.findings.some((finding) => finding.file.startsWith('artifacts/')), false, 'generated artifacts directory must not be scanned by default');
+}
+
 function testEscapedInnerHtmlDoesNotCreateFinding() {
   const fixture = makeTempProject('rock-house-innerhtml-');
   writeFile(fixture, 'static/app.js', [
@@ -107,6 +130,37 @@ function testEscapedInnerHtmlDoesNotCreateFinding() {
   const i2Findings = report.findings.filter((finding) => finding.checkId === 'I2');
   assert.strictEqual(i2Findings.length, 1, 'only unescaped innerHTML should be reported');
   assert.strictEqual(i2Findings[0].line, 6);
+}
+
+function testMalformedPnpmWorkspaceIsReported() {
+  const fixture = makeTempProject('rock-house-pnpm-workspace-');
+  writeFile(fixture, 'package.json', JSON.stringify({
+    name: 'pnpm-workspace-fixture',
+    packageManager: 'pnpm@9.15.0',
+    dependencies: {
+      next: '^16.0.0'
+    }
+  }, null, 2));
+  writeFile(fixture, 'pnpm-lock.yaml', [
+    "lockfileVersion: '9.0'",
+    '',
+    'importers:',
+    '  .:',
+    '    dependencies: {}'
+  ].join('\n'));
+  writeFile(fixture, 'pnpm-workspace.yaml', [
+    'onlyBuiltDependencies:',
+    '  - sharp',
+    'overrides:',
+    "  postcss: '>=8.5.10'"
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-pnpm-workspace-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+  const report = readJson(output);
+  assert(report.findings.some((finding) => finding.checkId === 'D2' && finding.file === 'pnpm-workspace.yaml'), 'malformed pnpm workspace should be reported');
 }
 
 function testSuppressionsAreAudited() {

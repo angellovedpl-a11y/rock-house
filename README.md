@@ -272,8 +272,10 @@ rock-house/
 │   ├── rock-house-ci.js  # Dependency-free JSON security gate for CI
 │   ├── lib/
 │   │   ├── config.js     # CLI/config parsing and validation
+│   │   ├── js-detection.js # JavaScript sink detection helpers
 │   │   ├── report-formatters.js # Markdown and SARIF output
-│   │   └── rules.js      # Rule metadata and severity impact
+│   │   ├── rules.js      # Rule metadata and severity impact
+│   │   └── supply-chain-detection.js # Package manager evidence checks
 │   ├── install-gitleaks.sh # Gitleaks installer (Bash)
 │   ├── install-gitleaks.ps1 # Gitleaks installer (PowerShell)
 │   ├── check-headers.sh   # Security headers checker
