@@ -9,6 +9,7 @@ const {
   readBoolean,
   resolveConfigPath
 } = require('./lib/config');
+const { evaluateAssurance, loadAssurance } = require('./lib/assurance');
 const { shouldFlagInnerHtml } = require('./lib/js-detection');
 const { toMarkdown, toSarif } = require('./lib/report-formatters');
 const { impactFor, ruleFor } = require('./lib/rules');
@@ -26,11 +27,15 @@ const sarifPath = sarifInput ? path.resolve(sarifInput) : '';
 const markdownInput = args.markdown || process.env.INPUT_MARKDOWN || config.markdown;
 const markdownPath = markdownInput ? path.resolve(markdownInput) : '';
 const minLevel = (args['min-level'] || process.env.INPUT_MIN_LEVEL || config.minLevel || 'prata').toLowerCase();
+const riskProfile = String(args['risk-profile'] || process.env.INPUT_RISK_PROFILE || config.riskProfile || 'standard').toLowerCase();
 const extraExclude = Array.isArray(config.exclude) ? config.exclude.map(normalizePath) : [];
 const suppressions = Array.isArray(config.suppressions) ? config.suppressions : [];
 const allowCriticalSuppressions = config.allowCriticalSuppressions === true;
 const baselineInput = args.baseline || process.env.INPUT_BASELINE || config.baseline;
 const baselinePath = baselineInput ? path.resolve(baselineInput) : '';
+const assuranceInput = args.assurance || process.env.INPUT_ASSURANCE || config.assurance;
+const assurancePath = assuranceInput ? path.resolve(assuranceInput) : '';
+const assurance = loadAssurance(assurancePath, fail);
 const baselineFingerprints = loadBaseline(baselinePath);
 const failOnNewOnly = readBoolean(args['fail-on-new-only'], process.env.INPUT_FAIL_ON_NEW_ONLY, config.failOnNewOnly);
 const annotationsEnabled = readBoolean(args.annotations, process.env.INPUT_ANNOTATIONS, config.annotations, true);
@@ -80,6 +85,7 @@ function main() {
   scanPackageJson(packageJsonPath, hasPackageJson);
   scanLockfile(hasPackageJson);
   scanPnpmWorkspace(targetRoot, hasPackageJson, addFinding);
+  evaluateAssurance({ assurance, assuranceFile: assurancePath, riskProfile, addFinding, gates });
 
   if (!hasGit) {
     addUnknown('S2', 'Secrets', 'No .git directory found; git history scan unavailable.', 'Run in a git checkout and run Gitleaks history scan.', 'Ouro');
@@ -104,6 +110,10 @@ function main() {
     version: '0.1-ci',
     target: targetRoot,
     config: configPath || null,
+    riskProfile,
+    assurance: {
+      file: assurancePath || null
+    },
     result,
     certification,
     score,

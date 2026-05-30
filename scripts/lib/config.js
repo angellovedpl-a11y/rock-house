@@ -7,6 +7,8 @@ const CONFIG_KEYS = new Set([
   'output',
   'sarif',
   'markdown',
+  'riskProfile',
+  'assurance',
   'exclude',
   'allowCriticalSuppressions',
   'suppressions',
@@ -23,6 +25,7 @@ const LEVEL_RANK = {
 };
 
 const SEVERITIES = new Set(['Critico', 'Alto', 'Medio', 'Baixo']);
+const RISK_PROFILES = new Set(['standard', 'high']);
 
 function parseArgs(argv) {
   const parsed = {};
@@ -79,7 +82,7 @@ function validateConfig(configValue, file) {
     }
   }
 
-  for (const key of ['path', 'minLevel', 'output', 'sarif', 'markdown']) {
+  for (const key of ['path', 'minLevel', 'output', 'sarif', 'markdown', 'assurance']) {
     if (configValue[key] !== undefined && typeof configValue[key] !== 'string') {
       throwUsageError(`Config key "${key}" must be a string in ${file}`);
     }
@@ -87,6 +90,12 @@ function validateConfig(configValue, file) {
 
   if (configValue.minLevel && !LEVEL_RANK[configValue.minLevel.toLowerCase()]) {
     throwUsageError(`Config key "minLevel" must be bronze, prata, or ouro in ${file}`);
+  }
+
+  if (configValue.riskProfile !== undefined) {
+    if (typeof configValue.riskProfile !== 'string' || !RISK_PROFILES.has(configValue.riskProfile.toLowerCase())) {
+      throwUsageError(`Config key "riskProfile" must be standard or high in ${file}`);
+    }
   }
 
   if (configValue.exclude !== undefined) {
@@ -163,6 +172,7 @@ module.exports = {
   LEVEL_RANK,
   loadConfig,
   parseArgs,
+  RISK_PROFILES,
   readBoolean,
   resolveConfigPath
 };

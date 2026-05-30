@@ -15,6 +15,8 @@ function toMarkdown(report) {
     `**Score:** ${report.score}/10`,
     `**Confianca:** ${report.confidence}`,
     `**Alvo:** \`${report.target}\``,
+    `**Perfil de risco:** \`${report.riskProfile}\``,
+    report.assurance.file ? `**Assurance:** \`${report.assurance.file}\`` : '',
     report.baseline.path ? `**Baseline:** \`${report.baseline.path}\` (${report.baseline.matched} conhecidos, ${report.baseline.new} novos)` : '',
     '',
     statusLine,

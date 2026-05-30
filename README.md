@@ -138,6 +138,7 @@ Optional project config:
 {
   "path": ".",
   "minLevel": "prata",
+  "riskProfile": "standard",
   "output": "rock-house-report.json",
   "sarif": "rock-house.sarif",
   "markdown": "rock-house-summary.md",
@@ -155,6 +156,46 @@ Optional project config:
   ]
 }
 ```
+
+For high-risk systems, attach an assurance bundle:
+
+```json
+{
+  "riskProfile": "high",
+  "assurance": "rock-house.assurance.json"
+}
+```
+
+Example assurance file:
+
+```json
+{
+  "dynamicTesting": {
+    "completed": true,
+    "environment": "staging",
+    "date": "2026-05-30"
+  },
+  "monitoring": {
+    "errorTracking": true,
+    "auditLogs": true,
+    "alerts": true,
+    "healthChecks": true
+  },
+  "review": {
+    "completed": true,
+    "reviewer": "security-team",
+    "date": "2026-05-30"
+  },
+  "approval": {
+    "humanApproved": true,
+    "approver": "release-manager",
+    "date": "2026-05-30"
+  }
+}
+```
+
+When `riskProfile` is `high`, Rock House blocks certification if dynamic testing,
+runtime monitoring, specialized review, or human approval evidence is missing.
 
 Use it locally:
 

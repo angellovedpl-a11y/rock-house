@@ -22,6 +22,8 @@ function run() {
   testGeneratedArtifactsDirectoryIsIgnored();
   testEscapedInnerHtmlDoesNotCreateFinding();
   testMalformedPnpmWorkspaceIsReported();
+  testHighRiskWithoutAssuranceBlocks();
+  testHighRiskAssuranceAllowsProgress();
   testMissingPathErrors();
   testMissingConfigErrors();
   testInvalidConfigErrors();
@@ -161,6 +163,82 @@ function testMalformedPnpmWorkspaceIsReported() {
   assert.strictEqual(result.status, 0, result.stdout + result.stderr);
   const report = readJson(output);
   assert(report.findings.some((finding) => finding.checkId === 'D2' && finding.file === 'pnpm-workspace.yaml'), 'malformed pnpm workspace should be reported');
+}
+
+function testHighRiskWithoutAssuranceBlocks() {
+  const fixture = makeTempProject('rock-house-high-risk-no-assurance-');
+  writeFile(fixture, 'package.json', JSON.stringify({
+    name: 'high-risk-fixture',
+    private: true
+  }, null, 2));
+  writeFile(fixture, 'package-lock.json', JSON.stringify({
+    name: 'high-risk-fixture',
+    lockfileVersion: 3,
+    packages: {}
+  }, null, 2));
+  writeFile(fixture, 'app/api/payments/route.ts', 'export async function POST() { return Response.json({ ok: true }); }');
+
+  const output = path.join(fixture, 'report.json');
+  const configPath = path.join(fixture, 'rock-house.config.json');
+  writeFile(fixture, 'rock-house.config.json', JSON.stringify({
+    path: fixture,
+    minLevel: 'bronze',
+    output,
+    riskProfile: 'high'
+  }, null, 2));
+
+  const result = spawnSync(process.execPath, [scanner, '--config', configPath], {
+    cwd: repoRoot,
+    encoding: 'utf8'
+  });
+
+  assert.notStrictEqual(result.status, 0, 'high-risk project without assurance bundle should fail');
+  const report = readJson(output);
+  assert.strictEqual(report.certification, 'Bloqueado');
+  assert(report.findings.some((finding) => finding.checkId === 'R0'), 'missing assurance bundle must be reported');
+}
+
+function testHighRiskAssuranceAllowsProgress() {
+  const fixture = makeTempProject('rock-house-high-risk-assurance-');
+  writeFile(fixture, 'package.json', JSON.stringify({
+    name: 'high-risk-assurance-fixture',
+    private: true
+  }, null, 2));
+  writeFile(fixture, 'package-lock.json', JSON.stringify({
+    name: 'high-risk-assurance-fixture',
+    lockfileVersion: 3,
+    packages: {}
+  }, null, 2));
+  writeFile(fixture, 'app/api/payments/route.ts', 'export async function POST() { return Response.json({ ok: true }); }');
+  writeFile(fixture, 'assurance.json', JSON.stringify({
+    dynamicTesting: { completed: true, environment: 'staging', date: '2026-05-30' },
+    monitoring: { errorTracking: true, auditLogs: true, alerts: true, healthChecks: true },
+    review: { completed: true, reviewer: 'security-team', date: '2026-05-30' },
+    approval: { humanApproved: true, approver: 'release-manager', date: '2026-05-30' }
+  }, null, 2));
+
+  const output = path.join(fixture, 'report.json');
+  const configPath = path.join(fixture, 'rock-house.config.json');
+  writeFile(fixture, 'rock-house.config.json', JSON.stringify({
+    path: fixture,
+    minLevel: 'bronze',
+    output,
+    riskProfile: 'high',
+    assurance: path.join(fixture, 'assurance.json')
+  }, null, 2));
+
+  const result = spawnSync(process.execPath, [scanner, '--config', configPath], {
+    cwd: repoRoot,
+    encoding: 'utf8'
+  });
+
+  assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+  const report = readJson(output);
+  assert.strictEqual(report.result, 'passed');
+  assert.strictEqual(report.riskProfile, 'high');
+  assert.strictEqual(report.assurance.file, path.join(fixture, 'assurance.json'));
+  assert.strictEqual(report.findings.some((finding) => /^R[0-4]$/.test(finding.checkId)), false, 'assurance findings should not exist when bundle is complete');
+  assert(report.gates.some((gate) => gate.id === 'R1' && gate.status === 'PASS'), 'dynamic testing gate should pass');
 }
 
 function testSuppressionsAreAudited() {
@@ -386,6 +464,8 @@ function testMissingConfigErrors() {
 function testInvalidConfigErrors() {
   assertInvalidConfig({ minlevel: 'prata' }, 'unknown config key should fail');
   assertInvalidConfig({ minLevel: 'gold' }, 'invalid minLevel should fail');
+  assertInvalidConfig({ riskProfile: 'critical' }, 'invalid riskProfile should fail');
+  assertInvalidConfig({ assurance: true }, 'assurance must be string');
   assertInvalidConfig({ exclude: 'docs' }, 'exclude must be array of strings');
   assertInvalidConfig({ allowCriticalSuppressions: 'yes' }, 'allowCriticalSuppressions must be boolean');
   assertInvalidConfig({ failOnNewOnly: 'yes' }, 'failOnNewOnly must be boolean');

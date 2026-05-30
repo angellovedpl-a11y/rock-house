@@ -11,7 +11,12 @@ const RULES = {
   D1: { title: 'Missing lockfile', owasp: ['A06:2021 Vulnerable and Outdated Components'], cwe: ['CWE-1104'], helpUri: 'https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/' },
   D2: { title: 'Dependency audit unavailable', owasp: ['A06:2021 Vulnerable and Outdated Components'], cwe: ['CWE-1104'], helpUri: 'https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/' },
   D3: { title: 'Advisory database unavailable', owasp: ['A06:2021 Vulnerable and Outdated Components'], cwe: ['CWE-1104'], helpUri: 'https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/' },
-  D4: { title: 'Loose dependency version', owasp: ['A06:2021 Vulnerable and Outdated Components'], cwe: ['CWE-1104'], helpUri: 'https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/' }
+  D4: { title: 'Loose dependency version', owasp: ['A06:2021 Vulnerable and Outdated Components'], cwe: ['CWE-1104'], helpUri: 'https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/' },
+  R0: { title: 'Missing high-risk assurance bundle', owasp: ['A09:2021 Security Logging and Monitoring Failures'], cwe: ['CWE-693'], helpUri: 'https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/' },
+  R1: { title: 'Missing dynamic security testing evidence', owasp: ['A09:2021 Security Logging and Monitoring Failures'], cwe: ['CWE-693'], helpUri: 'https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/' },
+  R2: { title: 'Missing runtime monitoring evidence', owasp: ['A09:2021 Security Logging and Monitoring Failures'], cwe: ['CWE-778'], helpUri: 'https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/' },
+  R3: { title: 'Missing specialized security review evidence', owasp: ['A04:2021 Insecure Design'], cwe: ['CWE-656'], helpUri: 'https://owasp.org/Top10/A04_2021-Insecure_Design/' },
+  R4: { title: 'Missing human deployment approval evidence', owasp: ['A04:2021 Insecure Design'], cwe: ['CWE-285'], helpUri: 'https://owasp.org/Top10/A04_2021-Insecure_Design/' }
 };
 
 function ruleFor(checkId) {
