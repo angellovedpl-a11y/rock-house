@@ -165,6 +165,12 @@ node scripts/rock-house-ci.js --config rock-house.config.json
 Precedence: CLI flags and Action inputs override config values; config values
 override defaults.
 
+## Security Policy
+
+Report suspected vulnerabilities through the private flow documented in
+[.github/SECURITY.md](./.github/SECURITY.md). Do not open a public issue for a
+security report.
+
 Suppressions are audited in the JSON and Markdown reports. Each suppression must
 include a `reason`. Critical findings cannot be suppressed unless
 `allowCriticalSuppressions` is explicitly set to `true`.
