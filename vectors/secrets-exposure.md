@@ -55,8 +55,9 @@ gitleaks detect --no-banner --report-format json --no-git
 Skip findings that match ANY of these conditions:
 - File path contains: `node_modules/`, `.git/`, `dist/`, `build/`, `vendor/`, `__pycache__/`
 - File extension is: `.md`, `.txt`, `.example`, `.sample`, `.template`
-- File path contains: `docs/`, `.planning/`, `references/`, `examples/`
-- Variable/key name contains: `ANON`, `PUBLIC`, `anon`, `public` (e.g. `NEXT_PUBLIC_SUPABASE_ANON_KEY`)
+- File path contains: `docs/`, `.planning/`, `references/`, `examples/`, except
+  when the selected project root is itself an example/testbed target.
+- Variable/key name is a known public-safe value (e.g. `NEXT_PUBLIC_SUPABASE_ANON_KEY`)
 - Finding is listed in `.gitleaksignore` file at project root
 
 Documentation files (markdown, text, examples) contain pattern descriptions, code
@@ -128,12 +129,17 @@ redis://:[^@]+@                                 # Redis connection string
 NEXT_PUBLIC_.*(SERVICE|SECRET|PRIVATE|ADMIN|PASSWORD) # Next.js sensitive
 ```
 
-Apply the same false-positive filters as Gitleaks: skip `node_modules/`, `.git/`, `dist/`, `build/`,
-and skip variables with `ANON`/`PUBLIC`/`anon` in the name.
+Apply the same false-positive filters as Gitleaks: skip `node_modules/`, `.git/`, `dist/`, `build/`.
+Do NOT discard a secret only because the variable name contains `PUBLIC` or `ANON`.
+Public-looking names reduce severity only when the value is known to be public-safe
+(for example a Supabase anon key). If the value matches a private token, service key,
+password, private key, or live credential pattern, keep the finding.
 
 **Documentation filter:** DISCARD any match found in `.md`, `.txt`, `.example`,
 `.sample`, or `.template` files, or inside `docs/`, `.planning/`, `references/`,
 `examples/` directories. These are descriptions of vulnerabilities, not actual secrets.
+Exception: if the selected project root is an example/testbed app, scan executable
+and deployed files under that root as real source code.
 Only flag matches in executable/deployed files (`.ts`, `.js`, `.py`, `.sql`, `.env`, `.json`, etc.).
 
 ### NEXT_PUBLIC_ Exposure
@@ -175,6 +181,17 @@ Even if .env is now gitignored, it may exist in git history.
 | Generic secret pattern (may be false positive) | Fallback only | 🟡 Medio |
 | Missing .gitignore for .env | Gitleaks or Fallback | 🟡 Medio |
 | Low-confidence pattern match | Fallback only | 🟢 Baixo |
+
+### Evidence Status
+
+Use these statuses for the check registry:
+
+- S1 PASS only when Gitleaks or fallback regex completed and found no current secrets.
+- S2 PASS only when Gitleaks scanned git history and found no history secrets.
+- S2 UNKNOWN when `.git` is missing or Gitleaks is unavailable.
+- S3 PASS only when `.gitignore` explicitly covers `.env` and `.env.*`.
+- S4 PASS only when all `NEXT_PUBLIC_` variables were reviewed and sensitive-looking names/values are absent.
+- Any scan that cannot run because a tool is missing, times out, or access is denied must be UNKNOWN, not PASS.
 
 ### Fix Suggestions
 

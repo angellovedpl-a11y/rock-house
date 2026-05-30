@@ -93,7 +93,9 @@ For each Crítico and Alto finding, include this analysis:
 
 ## Defense Depth Scoring
 
-Each risk contributes to the overall project score based on its depth:
+Each risk contributes to the overall project score based on its depth, but depth
+never cancels an open vulnerability. A critical or high finding remains blocking
+until fixed or explicitly accepted by the project owner.
 
 | Camadas Independentes | Nível | Metáfora | Contribuição ao Score |
 |----------------------|-------|----------|----------------------|
@@ -101,3 +103,10 @@ Each risk contributes to the overall project score based on its depth:
 | 1 | Ponto-único-de-falha | 🪵 Madeira | Penalidade por severidade (atenuada) |
 | 2 | Defesa sólida | 🪨 Pedra | Sem penalidade |
 | 3+ | Defesa em profundidade | 🔒 Fortaleza | Bônus +1 ao score |
+
+## Blocking Rule
+
+Kill-chain analysis can add confidence only after the vulnerable path is closed.
+Do not use defense depth to mark an exploitable Critico/Alto finding as safe.
+If the exploit still works in any realistic path, the finding remains open and
+the report-template risk caps must apply.

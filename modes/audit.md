@@ -1,7 +1,7 @@
 # Audit Mode
 
 Scans existing project code against security attack vectors, runs automated checks,
-and generates a severity-graded report with deterministic scoring in PT-BR.
+and generates a severity-graded report with evidence-based scoring in PT-BR.
 
 ## Step 1: Receive Stack Context
 
@@ -51,7 +51,7 @@ Stack rules augment vector detection with technology-specific patterns and sever
 ## Step 4: Run Automated Scans (via Bash)
 
 Before manual code scanning, run these automated checks. Each produces findings AND
-updates the check registry (S1-S5, D1-D4, H1-H5) for deterministic scoring.
+updates the check registry (S1-S7, D1-D5, H1-H5) for evidence scoring.
 
 ### 4a. Secrets Scan
 
@@ -166,13 +166,16 @@ Count how many critical risks have >=3 independent defense layers (for score bon
 Using the check registry populated in Steps 4 and 5, calculate the final score
 per the formula in [modes/report-template.md](report-template.md).
 
-1. For each of the 35 checks, record: PASS / FAIL / N/A
+1. For each of the 44 checks, record: PASS / FAIL / UNKNOWN / N/A
 2. Remove N/A checks from the total (not counted)
-3. Apply category weights: Secrets 3x, Injection 2x, Auth 2x, Supply 1x, Headers 1x, Network 2x, AI 2x
-4. Calculate score_base = (passed_weighted / applicable_weighted) x 10
-5. Add kill-chain bonus: +0.5 per critical risk with >=3 defense layers (max +2.0)
-6. Apply complexity threshold: if applicable_checks < 12, cap at 8.0
-7. Final score = min(10, score_base + bonus)
+3. Count UNKNOWN checks as 0 points and include them in the confidence rating
+4. Apply category weights: Secrets 3x, Injection 2x, Auth 2x, Supply 1x, Headers 1x, Network 2x, AI 2x
+5. Calculate score_base = (passed_weighted / applicable_weighted) x 10
+6. Add kill-chain bonus: +0.5 per critical risk with >=3 defense layers (max +2.0)
+7. Apply risk caps: open Critico caps score at 5.0; open Alto caps score at 7.0
+8. Apply uncertainty caps: UNKNOWN >20% caps score at 7.0; UNKNOWN >40% caps score at 5.0
+9. Apply complexity threshold: if applicable_checks < 12, cap at 8.0
+10. Final score and internal certification level come from [modes/report-template.md](report-template.md)
 
 ## Step 8: Generate Report
 
@@ -185,9 +188,10 @@ Report structure:
 2. **Findings** — organized by vector category (NOT by file)
 3. **Kill-chain analysis** — for each Critico/Alto finding
 4. **Summary table** — counts per severity level
-5. **Score Deterministico** — the full check registry table with weights and calculation
+5. **Score de Evidencias** — the full check registry table with weights and calculation
 6. **Overall score** — X.X/10 with metaphor (palha/madeira/pedra/fortaleza)
-7. **Proximos Passos** — top 3 priority fixes
+7. **Certificacao interna** — Bloqueado/Bronze/Prata/Ouro plus confidence rating
+8. **Proximos Passos** — top 3 priority fixes
 
 ## Step 9: Offer Follow-Up
 
@@ -213,7 +217,8 @@ lands in any of these file types, DISCARD IT — do not report as a finding:
 - `*.md` files (README, GABARITO, CHANGELOG, docs, planning artifacts)
 - `*.txt` files (notes, changelogs)
 - `*.example`, `*.sample`, `*.template` files
-- Files inside `docs/`, `.planning/`, `references/`, `examples/` directories
+- Files inside `docs/`, `.planning/`, `references/`, `examples/` directories,
+  except when the selected project root is itself an example/testbed target.
 
 **Why this matters:** Security skills, auditing tools, and testbed gabariots contain
 example patterns (regex, vulnerable code snippets, severity tables) that trigger the
@@ -224,6 +229,11 @@ actual source code.
 **Rule:** Only flag findings in files that are EXECUTED or DEPLOYED — source code
 (`.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.sql`, `.html`, `.css`), configuration files
 (`.json`, `.yaml`, `.toml`, `.env`), and shell scripts (`.sh`, `.ps1`).
+
+**Example/testbed exception:** If the user runs Rock House against
+`examples/vulnerable-*` or any explicitly selected vulnerable test project, scan it
+as real source code. Do not discard those findings just because the path contains
+`examples/`.
 
 Exception: `.env` files are flagged for structure/exposure analysis but their
 VALUES are never included in the report.

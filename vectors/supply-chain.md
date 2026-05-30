@@ -73,9 +73,11 @@ If `pip-audit` is NOT installed:
 
 #### yarn / pnpm projects
 
-Do NOT run `yarn audit` or `pnpm audit` — their JSON output formats are inconsistent across versions. Use static analysis only.
+Prefer the package manager's native audit when available. If JSON output cannot be
+parsed reliably, record the dependency CVE check as UNKNOWN and continue with static
+analysis.
 
-Warning: "Audit automatico nao suportado para yarn/pnpm — usando analise estatica."
+Warning: "Audit automatico nao conclusivo para yarn/pnpm — CVEs ficaram UNKNOWN; usando analise estatica complementar."
 
 ### Step 3: Static Analysis (via Read)
 
@@ -104,7 +106,7 @@ Track check D4: PASS if all production dependencies are pinned, FAIL otherwise.
 
 #### 3b. Known Compromised Packages
 
-Search `package.json` for these packages (hardcoded list):
+Search `package.json` for these packages (hardcoded starter list):
 
 ```
 event-stream        # supply chain attack — malicious code in flatmap-stream dep (2018)
@@ -118,6 +120,10 @@ rc@1.2.9+           # hijacked — malware injected (2021)
 ```
 
 Any match → Critico finding.
+
+This list is not complete and becomes stale. If network-enabled advisory tooling
+is unavailable, mark D3 as UNKNOWN unless all dependencies were checked against a
+current advisory source such as npm audit, OSV, GitHub Advisory Database, or pip-audit.
 
 Track check D3: PASS if 0 compromised packages found, FAIL otherwise.
 
@@ -201,6 +207,18 @@ no README). Read their `package.json` for install scripts.
 | npm audit moderate CVE | Medio | — |
 | npm audit low CVE | Baixo | — |
 | pip-audit not installed (warning only) | Info | — |
+
+### Evidence Status
+
+Use these statuses for the check registry:
+
+- D1 PASS only when the relevant lockfile exists and is tracked by git.
+- D2 PASS only when a dependency audit tool ran successfully and found 0 critical CVEs.
+- D2 UNKNOWN when npm/pip/pnpm/yarn audit cannot run, times out, or returns unparsable output.
+- D3 PASS only when dependencies were checked against a current advisory source.
+- D3 UNKNOWN when only the hardcoded compromised-package starter list was used.
+- D4 PASS only when production dependency versions are pinned or constrained to a specific compatible range.
+- D5 UNKNOWN if direct dependency install scripts could not be inspected.
 
 ### Fix Suggestions
 

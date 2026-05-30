@@ -1,7 +1,7 @@
 ---
 name: rock-house
-description: "Security audit and defense-in-depth analysis for web projects. Use when the user asks to audit code security, check for vulnerabilities, review OWASP compliance, run a pre-deploy security checklist, or plan defenses before coding a new feature."
-when_to_use: "When user mentions: security audit, vulnerability scan, check security, OWASP, security headers, secrets in code, defense in depth, pre-deploy review, rock house, casa de pedra, auditoria de seguranca."
+description: "Security audit, certification gate, and defense-in-depth analysis for web projects. Use when the user asks to audit code security, certify a project, check for vulnerabilities, review OWASP compliance, run a pre-deploy security checklist, or plan defenses before coding a new feature."
+when_to_use: "When user mentions: security audit, vulnerability scan, certify, certification, security gate, check security, OWASP, security headers, secrets in code, defense in depth, pre-deploy review, rock house, casa de pedra, auditoria de seguranca."
 allowed-tools: "Read Glob Grep Bash"
 ---
 
@@ -9,6 +9,8 @@ allowed-tools: "Read Glob Grep Bash"
 
 Analyzes web projects for security vulnerabilities using independent defense layers.
 Each layer must hold on its own — if one falls, the next stops the attack.
+Rock House is an internal security gate: it can certify the evaluated evidence,
+but it must never claim that a project is absolutely secure.
 
 ## Step 1: Detect Project Stack
 
@@ -46,12 +48,14 @@ Based on user intent, load the appropriate mode:
 
 | User Intent | Mode | Load |
 |---|---|---|
+| "certify", "certification", "security gate", "approve deploy", "block deploy" | Certify | [modes/certify.md](modes/certify.md) |
 | "audit", "scan", "check security", "review", "vulnerabilities" | Audit | [modes/audit.md](modes/audit.md) |
 | "checklist", "pre-deploy", "ready to ship?", "deploy check" | Checklist | [modes/checklist.md](modes/checklist.md) |
 | "planning", "new feature", "before I code", "defense table" | Preventive | [modes/preventive.md](modes/preventive.md) |
 
 If intent is unclear, ask the user:
 - **Audit** — scan existing code for vulnerabilities
+- **Certify** — strict evidence gate that can block deploy
 - **Checklist** — pre-deploy security gate
 - **Preventive** — plan defenses before coding a new feature
 
@@ -85,9 +89,12 @@ Load ONLY files matching the detected stack. Do NOT load all files.
 
 - All reports in Portuguese (PT-BR)
 - Each finding MUST include: severity (Critico/Alto/Medio/Baixo), file:line, description, impact, current defense, recommended fix with code example
+- Each check MUST be marked PASS, FAIL, UNKNOWN, or N/A. UNKNOWN means the skill could not verify the control with available evidence.
+- Certification levels are internal gates only: Bloqueado, Bronze, Prata, Ouro. Do not call them external certification.
 - Use metaphor: palha = no defense, madeira = partial, pedra = solid, fortaleza = independent layers
 - Group findings by attack vector, not by file
 - Kill-chain test: for each critical risk, verify each layer holds independently
+- Never mark a project as production-safe if any Critico finding remains open or if confidence is Baixa.
 
 ## References (loaded on demand)
 

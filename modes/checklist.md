@@ -8,8 +8,8 @@ Pre-deploy gate that validates defense-in-depth across all relevant risks before
 2. Filter checklist items to only those relevant to the detected stack
 3. Present items organized by RISK CATEGORY (not by technology)
 4. Each risk requires at least 2 independent defense layers to pass
-5. Mark each item pass/fail/warning
-6. Generate summary with overall readiness assessment
+5. Mark each item PASS / FAIL / UNKNOWN / N/A
+6. Generate summary with overall readiness assessment and internal certification level
 
 ## Step 1: Confirm Stack and Scope
 
@@ -131,8 +131,8 @@ Item 26 is verified via lockfile check.
 
 ## Resultado por Risco
 
-| Risco | Itens | ✅ | ❌ | ⚠️ | Camadas | Status |
-|-------|-------|-----|-----|-----|---------|--------|
+| Risco | Itens | PASS | FAIL | UNKNOWN | Camadas | Status |
+|-------|-------|------|------|---------|---------|--------|
 | Secrets | [N] | [n] | [n] | [n] | [N]/2 | [🪨/🪵/💨] |
 | Injection | [N] | [n] | [n] | [n] | [N]/2 | [🪨/🪵/💨] |
 | Auth | [N] | [n] | [n] | [n] | [N]/2 | [🪨/🪵/💨] |
@@ -143,15 +143,23 @@ Item 26 is verified via lockfile check.
 
 ## Veredicto
 
-[Se todos os riscos têm ≥2 camadas:]
-🏠🪨 **Casa de pedra — pronto para deploy!**
+[Se todos os riscos têm ≥2 camadas, zero FAIL crítico/alto e UNKNOWN baixo:]
+🏠🪨 **Casa de pedra — gate interno aprovado para deploy conforme nivel de certificacao.**
 
-[Se algum risco tem <2 camadas:]
+[Se algum risco tem <2 camadas, FAIL crítico/alto, ou UNKNOWN alto:]
 🏠🪵 **Casa de madeira — corrija os itens ❌ antes de publicar.**
 [Lista dos itens que falharam com fix sugerido]
 
 [Se múltiplos riscos sem nenhuma camada:]
 🏠💨 **Casa de palha — NÃO publique. Corrija os itens críticos primeiro.**
+
+## Regras de Bloqueio
+
+- Qualquer FAIL crítico bloqueia deploy.
+- Qualquer FAIL alto bloqueia certificacao Prata/Ouro.
+- UNKNOWN acima de 40% bloqueia deploy.
+- UNKNOWN acima de 20% impede certificacao Ouro.
+- Checks que dependem de ferramenta indisponivel devem ser UNKNOWN, nunca PASS.
 ```
 
 ## Step 4: Offer Follow-Up

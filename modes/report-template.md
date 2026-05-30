@@ -12,6 +12,8 @@ Defines the exact output format for Rock House audit reports. All reports are in
 **Stack detectada:** [frameworks e tecnologias encontradas]
 **Modulos de vetor carregados:** [lista dos modulos usados]
 **Avaliacao geral:** [palha/madeira/pedra/fortaleza] ([score]/10)
+**Nivel de certificacao interna:** [Bloqueado / Bronze / Prata / Ouro]
+**Confianca da auditoria:** [Alta / Media / Baixa] — baseada em quantos checks ficaram UNKNOWN
 ```
 
 ## Severity Definitions
@@ -102,10 +104,18 @@ Nenhuma vulnerabilidade foi encontrada com os modulos de vetor disponiveis. Isso
 **Avaliacao:** A ser determinada quando modulos estiverem disponiveis.
 ```
 
-## Score Calculation — Deterministic Binary Checks
+## Score Calculation — Deterministic Evidence Checks
 
-The score is calculated from 44 binary checks (pass/fail). Checks not applicable
-to the detected stack are REMOVED from the total (not counted as pass or fail).
+The score is calculated from 44 evidence checks. Each applicable check MUST be
+classified as PASS, FAIL, UNKNOWN, or N/A:
+
+- PASS: evidence was found that the defense exists and is correctly configured.
+- FAIL: evidence was found that the defense is absent, broken, or unsafe.
+- UNKNOWN: the audit could not verify the check with available files/tools.
+- N/A: the check does not apply to the detected stack.
+
+N/A checks are removed from the total. UNKNOWN checks stay in the total and count
+as 0 points. A project with too many UNKNOWN checks cannot receive high certification.
 
 ### Check Registry
 
@@ -187,7 +197,7 @@ to the detected stack are REMOVED from the total (not counted as pass or fail).
 ### Score Formula
 
 ```
-passed_weighted = sum(passed_checks x category_weight)
+passed_weighted = sum(PASS checks x category_weight)
 applicable_weighted = sum(applicable_checks x category_weight)
 
 score_base = (passed_weighted / applicable_weighted) x 10
@@ -198,11 +208,42 @@ bonus = min(bonus, 2.0)
 
 score_final = min(10, score_base + bonus)
 
+# Risk caps — open severe findings limit certification regardless of score
+if critical_findings_open > 0:
+    score_final = min(5.0, score_final)
+if high_findings_open > 0:
+    score_final = min(7.0, score_final)
+if unknown_weighted / applicable_weighted > 0.20:
+    score_final = min(7.0, score_final)
+if unknown_weighted / applicable_weighted > 0.40:
+    score_final = min(5.0, score_final)
+
 # Complexity threshold
 if applicable_checks < 12:
     score_final = min(8.0, score_final)
     # Note: "Projeto simples — menos superficie de ataque testada"
 ```
+
+### Internal Certification Levels
+
+Rock House certification is an internal deploy gate, not a legal or external
+security certification. It means the project passed the evaluated checks with
+enough evidence for the selected level.
+
+| Level | Requirements | Deploy Gate |
+|-------|--------------|-------------|
+| Bloqueado | Any open Critico finding, score < 6.1, or UNKNOWN > 40% | Do not deploy |
+| Bronze | Score >= 6.1, no open Critico, UNKNOWN <= 40% | Deploy only to preview/staging |
+| Prata | Score >= 7.5, no open Critico/Alto, UNKNOWN <= 20% | Deploy allowed with monitoring |
+| Ouro | Score >= 8.5, no open Critico/Alto, UNKNOWN <= 10%, dynamic headers/dependency/secrets checks completed | Production deploy gate passed |
+
+### Confidence Rules
+
+| Confidence | Criteria |
+|------------|----------|
+| Alta | UNKNOWN <= 10% and automated checks completed |
+| Media | UNKNOWN <= 25% or one automated check unavailable |
+| Baixa | UNKNOWN > 25%, missing lockfile, no git history, or dependency audit unavailable |
 
 ### Score Scale
 
@@ -218,20 +259,22 @@ if applicable_checks < 12:
 After all findings, present the score table:
 
 ```markdown
-## Score Deterministico
+## Score de Evidencias
 
-| Categoria | Checks | Passaram | Peso | Pontos |
-|-----------|--------|----------|------|--------|
-| Secrets | [N/7] | [n] | 3x | [n x 3] / [N x 3] |
-| Injection | [N/7] | [n] | 2x | [n x 2] / [N x 2] |
-| Auth | [N/8] | [n] | 2x | [n x 2] / [N x 2] |
-| Supply | [N/5] | [n] | 1x | [n x 1] / [N x 1] |
-| Headers | [N/5] | [n] | 1x | [n x 1] / [N x 1] |
-| Network | [N/4] | [n] | 2x | [n x 2] / [N x 2] |
-| AI | [N/4] | [n] | 2x | [n x 2] / [N x 2] |
-| **Total** | **[T]** | **[P]** | | **[Pw] / [Aw]** |
+| Categoria | Checks | PASS | FAIL | UNKNOWN | Peso | Pontos |
+|-----------|--------|------|------|---------|------|--------|
+| Secrets | [N/7] | [p] | [f] | [u] | 3x | [p x 3] / [N x 3] |
+| Injection | [N/7] | [p] | [f] | [u] | 2x | [p x 2] / [N x 2] |
+| Auth | [N/8] | [p] | [f] | [u] | 2x | [p x 2] / [N x 2] |
+| Supply | [N/5] | [p] | [f] | [u] | 1x | [p x 1] / [N x 1] |
+| Headers | [N/5] | [p] | [f] | [u] | 1x | [p x 1] / [N x 1] |
+| Network | [N/4] | [p] | [f] | [u] | 2x | [p x 2] / [N x 2] |
+| AI | [N/4] | [p] | [f] | [u] | 2x | [p x 2] / [N x 2] |
+| **Total** | **[T]** | **[P]** | **[F]** | **[U]** | | **[Pw] / [Aw]** |
 
 **Score base:** [X.X] / 10
 **Bonus kill-chain:** +[X.X]
 **Score final:** [X.X] / 10 — [metaphor name]
+**Certificacao interna:** [Bloqueado/Bronze/Prata/Ouro]
+**Confianca:** [Alta/Media/Baixa]
 ```
