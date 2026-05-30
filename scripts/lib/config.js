@@ -10,6 +10,7 @@ const CONFIG_KEYS = new Set([
   'riskProfile',
   'assurance',
   'assuranceTrust',
+  'assurancePolicy',
   'dast',
   'observability',
   'exclude',
@@ -103,6 +104,10 @@ function validateConfig(configValue, file) {
 
   if (configValue.assuranceTrust !== undefined) {
     validateAssuranceTrust(configValue.assuranceTrust, file);
+  }
+
+  if (configValue.assurancePolicy !== undefined) {
+    validateAssurancePolicy(configValue.assurancePolicy, file);
   }
 
   if (configValue.dast !== undefined) {
@@ -269,6 +274,44 @@ function validateAssuranceTrust(value, file) {
   });
 }
 
+function validateAssurancePolicy(value, file) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throwUsageError(`Config key "assurancePolicy" must be an object in ${file}`);
+  }
+
+  const allowed = new Set(['requiredEnvironment', 'referencePattern', 'maxApprovalAgeDays', 'requireExpires', 'maxExpiryDays']);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throwUsageError(`Unknown assurancePolicy key "${key}" in ${file}`);
+    }
+  }
+
+  if (value.requiredEnvironment !== undefined && typeof value.requiredEnvironment !== 'string') {
+    throwUsageError(`Config key "assurancePolicy.requiredEnvironment" must be a string in ${file}`);
+  }
+
+  if (value.referencePattern !== undefined) {
+    if (typeof value.referencePattern !== 'string') {
+      throwUsageError(`Config key "assurancePolicy.referencePattern" must be a string in ${file}`);
+    }
+    try {
+      new RegExp(value.referencePattern);
+    } catch (error) {
+      throwUsageError(`Config key "assurancePolicy.referencePattern" must be a valid regular expression in ${file}: ${error.message}`);
+    }
+  }
+
+  for (const key of ['maxApprovalAgeDays', 'maxExpiryDays']) {
+    if (value[key] !== undefined && (!Number.isFinite(value[key]) || value[key] <= 0)) {
+      throwUsageError(`Config key "assurancePolicy.${key}" must be a positive number in ${file}`);
+    }
+  }
+
+  if (value.requireExpires !== undefined && typeof value.requireExpires !== 'boolean') {
+    throwUsageError(`Config key "assurancePolicy.requireExpires" must be a boolean in ${file}`);
+  }
+}
+
 function throwUsageError(message) {
   console.error(`Rock House CI error: ${message}`);
   process.exit(2);
@@ -330,6 +373,7 @@ module.exports = {
   parseArgs,
   RISK_PROFILES,
   readBoolean,
+  validateAssurancePolicy,
   resolveAssuranceTrust,
   resolveDastConfig,
   resolveConfigPath

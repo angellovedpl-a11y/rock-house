@@ -25,7 +25,10 @@ const RULES = {
   R3: { title: 'Missing specialized security review evidence', owasp: ['A04:2021 Insecure Design'], cwe: ['CWE-656'], helpUri: 'https://owasp.org/Top10/A04_2021-Insecure_Design/' },
   R4: { title: 'Missing human deployment approval evidence', owasp: ['A04:2021 Insecure Design'], cwe: ['CWE-285'], helpUri: 'https://owasp.org/Top10/A04_2021-Insecure_Design/' },
   R5: { title: 'Invalid assurance integrity digest', owasp: ['A08:2021 Software and Data Integrity Failures'], cwe: ['CWE-353'], helpUri: 'https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/' },
-  R6: { title: 'Invalid assurance signature', owasp: ['A08:2021 Software and Data Integrity Failures'], cwe: ['CWE-347'], helpUri: 'https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/' }
+  R6: { title: 'Invalid assurance signature', owasp: ['A08:2021 Software and Data Integrity Failures'], cwe: ['CWE-347'], helpUri: 'https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/' },
+  R7: { title: 'Approval environment violates assurance policy', owasp: ['A04:2021 Insecure Design'], cwe: ['CWE-284'], helpUri: 'https://owasp.org/Top10/A04_2021-Insecure_Design/' },
+  R8: { title: 'Approval reference violates assurance policy', owasp: ['A04:2021 Insecure Design'], cwe: ['CWE-285'], helpUri: 'https://owasp.org/Top10/A04_2021-Insecure_Design/' },
+  R9: { title: 'Approval validity violates assurance policy', owasp: ['A04:2021 Insecure Design'], cwe: ['CWE-613'], helpUri: 'https://owasp.org/Top10/A04_2021-Insecure_Design/' }
 };
 
 function ruleFor(checkId) {

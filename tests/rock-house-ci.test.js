@@ -36,6 +36,9 @@ async function run() {
   testInvalidStructuredApprovalErrors();
   testTamperedAssuranceDigestBlocks();
   testUnsignedAssuranceBlocks();
+  testAssurancePolicyEnvironmentBlocks();
+  testAssurancePolicyReferenceBlocks();
+  testAssurancePolicyValidityBlocks();
   testMissingPathErrors();
   testMissingConfigErrors();
   testInvalidConfigErrors();
@@ -597,6 +600,53 @@ function testUnsignedAssuranceBlocks() {
   assert(report.findings.some((finding) => finding.checkId === 'R6'), 'missing signature must fail R6');
 }
 
+function testAssurancePolicyEnvironmentBlocks() {
+  const fixture = makeTempProject('rock-house-policy-env-');
+  const assurancePath = writePolicyFixture(fixture, {
+    environment: 'staging',
+    reference: 'CR-2026-055',
+    expires: '2026-06-01'
+  });
+  const keys = createSigningKeys(fixture);
+  signAssuranceFile(assurancePath, keys.privateKey, keys.keyId);
+  const report = runPolicyScan(fixture, assurancePath, keys.publicKey, keys.keyId, {
+    requiredEnvironment: 'production'
+  });
+  assert(report.findings.some((finding) => finding.checkId === 'R7'), 'environment policy mismatch must fail R7');
+}
+
+function testAssurancePolicyReferenceBlocks() {
+  const fixture = makeTempProject('rock-house-policy-ref-');
+  const assurancePath = writePolicyFixture(fixture, {
+    environment: 'production',
+    reference: 'ticket-55',
+    expires: '2026-06-01'
+  });
+  const keys = createSigningKeys(fixture);
+  signAssuranceFile(assurancePath, keys.privateKey, keys.keyId);
+  const report = runPolicyScan(fixture, assurancePath, keys.publicKey, keys.keyId, {
+    referencePattern: '^CR-[0-9]{4}-[0-9]{3}$'
+  });
+  assert(report.findings.some((finding) => finding.checkId === 'R8'), 'reference policy mismatch must fail R8');
+}
+
+function testAssurancePolicyValidityBlocks() {
+  const fixture = makeTempProject('rock-house-policy-validity-');
+  const assurancePath = writePolicyFixture(fixture, {
+    environment: 'production',
+    reference: 'CR-2026-056',
+    expires: '2026-07-15'
+  });
+  const keys = createSigningKeys(fixture);
+  signAssuranceFile(assurancePath, keys.privateKey, keys.keyId);
+  const report = runPolicyScan(fixture, assurancePath, keys.publicKey, keys.keyId, {
+    requireExpires: true,
+    maxApprovalAgeDays: 10,
+    maxExpiryDays: 7
+  });
+  assert(report.findings.some((finding) => finding.checkId === 'R9'), 'approval validity policy mismatch must fail R9');
+}
+
 function testSuppressionsAreAudited() {
   const fixture = makeTempProject('rock-house-suppress-');
   writeFile(fixture, 'package.json', JSON.stringify({
@@ -825,6 +875,9 @@ function testInvalidConfigErrors() {
   assertInvalidConfig({ assuranceTrust: true }, 'assuranceTrust must be object');
   assertInvalidConfig({ assuranceTrust: { publicKeys: [] } }, 'assuranceTrust publicKeys must be non-empty');
   assertInvalidConfig({ assuranceTrust: { publicKeys: [{ keyId: 'a' }] } }, 'assuranceTrust public key path is required');
+  assertInvalidConfig({ assurancePolicy: true }, 'assurancePolicy must be object');
+  assertInvalidConfig({ assurancePolicy: { referencePattern: '[' } }, 'assurancePolicy referencePattern must be valid regex');
+  assertInvalidConfig({ assurancePolicy: { maxApprovalAgeDays: 0 } }, 'assurancePolicy maxApprovalAgeDays must be positive');
   assertInvalidConfig({ dast: true }, 'dast must be object');
   assertInvalidConfig({ dast: { url: 123 } }, 'dast url must be string');
   assertInvalidConfig({ dast: { url: 'http://127.0.0.1:3000', timeoutMs: 0 } }, 'dast timeout must be positive');
@@ -953,6 +1006,59 @@ function createSigningKeys(root) {
   });
   assert.strictEqual(result.status, 0, result.stdout + result.stderr);
   return { privateKey, publicKey, keyId };
+}
+
+function writePolicyFixture(root, approvalOverrides = {}) {
+  writeFile(root, 'package.json', JSON.stringify({
+    name: 'policy-fixture',
+    private: true
+  }, null, 2));
+  writeFile(root, 'package-lock.json', JSON.stringify({
+    name: 'policy-fixture',
+    lockfileVersion: 3,
+    packages: {}
+  }, null, 2));
+  const assurancePath = path.join(root, 'assurance.json');
+  writeFile(root, 'assurance.json', JSON.stringify({
+    dynamicTesting: { completed: true, environment: 'staging', date: '2026-05-30' },
+    monitoring: { errorTracking: true, auditLogs: true, alerts: true, healthChecks: true },
+    review: { completed: true, reviewer: 'security-team', date: '2026-05-30' },
+    approval: {
+      schemaVersion: 1,
+      status: 'approved',
+      approver: 'release-manager',
+      date: '2026-05-30',
+      environment: 'production',
+      scope: 'payments rollout',
+      reference: 'CR-2026-057',
+      ...approvalOverrides
+    }
+  }, null, 2));
+  return assurancePath;
+}
+
+function runPolicyScan(root, assurancePath, publicKey, keyId, assurancePolicy) {
+  const output = path.join(root, 'report.json');
+  const configPath = path.join(root, 'rock-house.config.json');
+  writeFile(root, 'rock-house.config.json', JSON.stringify({
+    path: root,
+    minLevel: 'bronze',
+    output,
+    riskProfile: 'high',
+    assurance: assurancePath,
+    assuranceTrust: {
+      publicKeys: [
+        { keyId, path: publicKey }
+      ]
+    },
+    assurancePolicy
+  }, null, 2));
+  const result = spawnSync(process.execPath, [scanner, '--config', configPath], {
+    cwd: repoRoot,
+    encoding: 'utf8'
+  });
+  assert.notStrictEqual(result.status, 0, result.stdout + result.stderr);
+  return readJson(output);
 }
 
 function startServer(handler) {

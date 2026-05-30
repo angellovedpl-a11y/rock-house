@@ -189,6 +189,13 @@ For high-risk systems, attach an assurance bundle:
         "path": ".rock-house/assurance-public.pem"
       }
     ]
+  },
+  "assurancePolicy": {
+    "requiredEnvironment": "production",
+    "referencePattern": "^CR-[0-9]{4}-[0-9]{3}$",
+    "maxApprovalAgeDays": 14,
+    "requireExpires": true,
+    "maxExpiryDays": 30
   }
 }
 ```
@@ -244,6 +251,9 @@ approved the deploy, for which environment/scope, under which change reference,
 and until when that approval remains valid.
 High-risk assurance bundles also require a valid integrity digest so Rock House
 can detect changes made after approval.
+`assurancePolicy` lets the gate enforce which environment the approval covers,
+which change-reference pattern is acceptable, and how long the approval remains
+valid.
 
 Generate or refresh the digest:
 

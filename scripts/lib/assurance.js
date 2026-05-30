@@ -183,6 +183,7 @@ function evaluateAssurance(options) {
     monitoringCoverage,
     monitoringEvidence,
     assuranceTrust,
+    assurancePolicy,
     addFinding,
     gates
   } = options;
@@ -265,6 +266,14 @@ function evaluateAssurance(options) {
     description: 'High-risk project is missing a valid assurance signature trusted by Rock House.',
     recommendation: 'Sign the assurance bundle with a trusted private key and configure the matching public key in assuranceTrust.',
     passNote: signaturePassNote(assurance.signature),
+    addFinding,
+    gates
+  });
+
+  evaluateAssurancePolicy({
+    approval: assurance.approval,
+    assurancePolicy,
+    file: evidenceRef,
     addFinding,
     gates
   });
@@ -399,6 +408,89 @@ function hasValidSignature(assurance, assuranceTrust) {
 function signaturePassNote(signature) {
   if (!signature || typeof signature !== 'object') return 'Assurance signature is valid.';
   return `Assurance signature is valid (${signature.keyId}).`;
+}
+
+function evaluateAssurancePolicy(options) {
+  const {
+    approval,
+    assurancePolicy,
+    file,
+    addFinding,
+    gates
+  } = options;
+  if (!assurancePolicy || !approval || typeof approval !== 'object' || 'humanApproved' in approval) return;
+
+  if (assurancePolicy.requiredEnvironment) {
+    evaluateBooleanRequirement(
+      String(approval.environment || '').toLowerCase() === String(assurancePolicy.requiredEnvironment).toLowerCase(),
+      {
+        checkId: 'R7',
+        file,
+        description: `Approval environment does not match required environment "${assurancePolicy.requiredEnvironment}".`,
+        recommendation: 'Issue a new approval for the intended environment or update assurancePolicy to match the deploy target.',
+        passNote: `Approval environment matches policy (${approval.environment}).`,
+        addFinding,
+        gates
+      }
+    );
+  }
+
+  if (assurancePolicy.referencePattern) {
+    const pattern = new RegExp(assurancePolicy.referencePattern);
+    evaluateBooleanRequirement(
+      pattern.test(String(approval.reference || '')),
+      {
+        checkId: 'R8',
+        file,
+        description: 'Approval reference does not match the required assurance policy pattern.',
+        recommendation: 'Use a change or release reference that matches assurancePolicy.referencePattern.',
+        passNote: `Approval reference matches policy (${approval.reference}).`,
+        addFinding,
+        gates
+      }
+    );
+  }
+
+  if (assurancePolicy.requireExpires === true || assurancePolicy.maxApprovalAgeDays || assurancePolicy.maxExpiryDays) {
+    evaluateBooleanRequirement(
+      approvalValidityPasses(approval, assurancePolicy),
+      {
+        checkId: 'R9',
+        file,
+        description: 'Approval validity does not satisfy assurance policy requirements.',
+        recommendation: 'Refresh the approval date/expiry or relax assurancePolicy only if that matches the actual release process.',
+        passNote: approvalValidityNote(approval, assurancePolicy),
+        addFinding,
+        gates
+      }
+    );
+  }
+}
+
+function approvalValidityPasses(approval, assurancePolicy) {
+  const now = Date.now();
+  const approvedAt = new Date(approval.date).getTime();
+  if (Number.isNaN(approvedAt)) return false;
+  if (assurancePolicy.requireExpires === true && !approval.expires) return false;
+  if (assurancePolicy.maxApprovalAgeDays) {
+    const maxAgeMs = assurancePolicy.maxApprovalAgeDays * 24 * 60 * 60 * 1000;
+    if ((now - approvedAt) > maxAgeMs) return false;
+  }
+  if (assurancePolicy.maxExpiryDays && approval.expires) {
+    const expiresAt = new Date(approval.expires).getTime();
+    if (Number.isNaN(expiresAt)) return false;
+    const maxExpiryMs = assurancePolicy.maxExpiryDays * 24 * 60 * 60 * 1000;
+    if ((expiresAt - approvedAt) > maxExpiryMs) return false;
+  }
+  return true;
+}
+
+function approvalValidityNote(approval, assurancePolicy) {
+  const parts = [`approved=${approval.date}`];
+  if (approval.expires) parts.push(`expires=${approval.expires}`);
+  if (assurancePolicy.maxApprovalAgeDays) parts.push(`maxAgeDays=${assurancePolicy.maxApprovalAgeDays}`);
+  if (assurancePolicy.maxExpiryDays) parts.push(`maxExpiryDays=${assurancePolicy.maxExpiryDays}`);
+  return `Approval validity matches policy (${parts.join(', ')}).`;
 }
 
 module.exports = {

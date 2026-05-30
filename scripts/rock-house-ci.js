@@ -42,7 +42,8 @@ const baselinePath = baselineInput ? path.resolve(baselineInput) : '';
 const assuranceInput = args.assurance || process.env.INPUT_ASSURANCE || config.assurance;
 const assurancePath = assuranceInput ? path.resolve(assuranceInput) : '';
 const assurance = loadAssurance(assurancePath, fail);
-const assuranceTrust = resolveAssuranceTrust(args, config);
+const assuranceTrust = resolveAssuranceTrust(args, config, fail);
+const assurancePolicy = config.assurancePolicy && typeof config.assurancePolicy === 'object' ? config.assurancePolicy : null;
 const observabilityEvidencePath = observability?.evidence ? path.resolve(observability.evidence) : '';
 const baselineFingerprints = loadBaseline(baselinePath);
 const failOnNewOnly = readBoolean(args['fail-on-new-only'], process.env.INPUT_FAIL_ON_NEW_ONLY, config.failOnNewOnly);
@@ -109,6 +110,7 @@ async function main() {
     monitoringCoverage: observabilityReport.coverage,
     monitoringEvidence: observabilityReport.note,
     assuranceTrust,
+    assurancePolicy,
     addFinding,
     gates
   });
