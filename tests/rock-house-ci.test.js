@@ -27,6 +27,7 @@ async function run() {
   testEscapedInnerHtmlDoesNotCreateFinding();
   testMalformedPnpmWorkspaceIsReported();
   await testDastDetectsRuntimeHeaders();
+  await testDastAdvancedProbes();
   testHighRiskWithoutAssuranceBlocks();
   await testHighRiskAssuranceUsesDastEvidence();
   testMissingPathErrors();
@@ -235,6 +236,62 @@ async function testDastDetectsRuntimeHeaders() {
     assert.strictEqual(report.dast.executed, true);
     assert(report.findings.some((finding) => finding.checkId === 'H1'), 'dynamic scan should detect missing CSP');
     assert(report.findings.some((finding) => finding.checkId === 'H4'), 'dynamic scan should detect wildcard CORS with credentials');
+  } finally {
+    await closeServer(server.instance);
+  }
+}
+
+async function testDastAdvancedProbes() {
+  const server = await startServer((req, res) => {
+    const url = new URL(req.url, 'http://127.0.0.1');
+    if (url.pathname === '/admin') {
+      res.statusCode = 200;
+      res.end('admin panel');
+      return;
+    }
+    if (url.pathname === '/redirect') {
+      res.statusCode = 302;
+      res.setHeader('Location', url.searchParams.get('next') || '/');
+      res.end();
+      return;
+    }
+    if (url.pathname === '/boom') {
+      res.statusCode = 500;
+      res.end('TypeError: fail\n    at handler (/app/server.js:10:3)');
+      return;
+    }
+    res.statusCode = 200;
+    res.setHeader('Content-Security-Policy', "default-src 'self'");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.end('ok');
+  });
+
+  try {
+    const fixture = makeTempProject('rock-house-dast-advanced-');
+    writeFile(fixture, 'app/page.tsx', 'export default function Page() { return <div>ok</div>; }');
+    const output = path.join(fixture, 'report.json');
+    const configPath = path.join(fixture, 'rock-house.config.json');
+    writeFile(fixture, 'rock-house.config.json', JSON.stringify({
+      path: fixture,
+      minLevel: 'bronze',
+      output,
+      dast: {
+        url: server.url,
+        paths: ['/redirect'],
+        authProtectedPaths: ['/admin'],
+        errorPaths: ['/boom'],
+        redirectParamNames: ['next'],
+        timeoutMs: 2000
+      }
+    }, null, 2));
+
+    const result = await runScannerAsyncFromConfig(configPath);
+
+    assert.notStrictEqual(result.status, 0, 'advanced probes should fail when protected route, redirect, and error route are unsafe');
+    const report = readJson(output);
+    assert(report.findings.some((finding) => finding.checkId === 'A4'), 'auth probe should detect unprotected route');
+    assert(report.findings.some((finding) => finding.checkId === 'H7'), 'redirect probe should detect open redirect');
+    assert(report.findings.some((finding) => finding.checkId === 'S7' && finding.file.includes('/boom')), 'error-route probe should detect stack disclosure');
   } finally {
     await closeServer(server.instance);
   }
@@ -537,6 +594,9 @@ function testInvalidConfigErrors() {
   assertInvalidConfig({ dast: true }, 'dast must be object');
   assertInvalidConfig({ dast: { url: 123 } }, 'dast url must be string');
   assertInvalidConfig({ dast: { url: 'http://127.0.0.1:3000', timeoutMs: 0 } }, 'dast timeout must be positive');
+  assertInvalidConfig({ dast: { url: 'http://127.0.0.1:3000', authProtectedPaths: true } }, 'dast auth paths must be string array');
+  assertInvalidConfig({ dast: { url: 'http://127.0.0.1:3000', errorPaths: true } }, 'dast error paths must be string array');
+  assertInvalidConfig({ dast: { url: 'http://127.0.0.1:3000', redirectParamNames: true } }, 'dast redirect params must be string array');
   assertInvalidConfig({ observability: true }, 'observability must be object');
   assertInvalidConfig({ observability: { evidence: true } }, 'observability evidence must be string');
   assertInvalidConfig({ exclude: 'docs' }, 'exclude must be array of strings');

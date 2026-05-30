@@ -178,7 +178,7 @@ function validateDast(value, file) {
     throwUsageError(`Config key "dast" must be an object in ${file}`);
   }
 
-  const allowed = new Set(['url', 'paths', 'timeoutMs']);
+  const allowed = new Set(['url', 'paths', 'timeoutMs', 'authProtectedPaths', 'errorPaths', 'redirectParamNames']);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) {
       throwUsageError(`Unknown dast key "${key}" in ${file}`);
@@ -191,6 +191,18 @@ function validateDast(value, file) {
 
   if (value.paths !== undefined) {
     validateStringArray(value.paths, 'dast.paths', file);
+  }
+
+  if (value.authProtectedPaths !== undefined) {
+    validateStringArray(value.authProtectedPaths, 'dast.authProtectedPaths', file);
+  }
+
+  if (value.errorPaths !== undefined) {
+    validateStringArray(value.errorPaths, 'dast.errorPaths', file);
+  }
+
+  if (value.redirectParamNames !== undefined) {
+    validateStringArray(value.redirectParamNames, 'dast.redirectParamNames', file);
   }
 
   if (value.timeoutMs !== undefined) {

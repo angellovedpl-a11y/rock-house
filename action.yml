@@ -35,6 +35,18 @@ inputs:
     description: Optional comma-separated path list for dynamic HTTP checks.
     required: false
     default: ''
+  dast-auth-paths:
+    description: Optional comma-separated protected paths that must reject unauthenticated access.
+    required: false
+    default: ''
+  dast-error-paths:
+    description: Optional comma-separated paths that exercise error handling.
+    required: false
+    default: ''
+  dast-redirect-params:
+    description: Optional comma-separated redirect parameter names to probe for open redirects.
+    required: false
+    default: ''
   dast-timeout-ms:
     description: Optional timeout in milliseconds for each dynamic HTTP request.
     required: false

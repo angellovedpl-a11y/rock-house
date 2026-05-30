@@ -187,10 +187,16 @@ function resolveDastConfig(parsedArgs, currentConfig) {
   if (!url) return null;
 
   const pathsInput = parsedArgs['dast-paths'] || process.env.INPUT_DAST_PATHS;
+  const authPathsInput = parsedArgs['dast-auth-paths'] || process.env.INPUT_DAST_AUTH_PATHS;
+  const errorPathsInput = parsedArgs['dast-error-paths'] || process.env.INPUT_DAST_ERROR_PATHS;
+  const redirectParamsInput = parsedArgs['dast-redirect-params'] || process.env.INPUT_DAST_REDIRECT_PARAMS;
   const timeoutInput = parsedArgs['dast-timeout-ms'] || process.env.INPUT_DAST_TIMEOUT_MS;
   return {
     url,
     paths: pathsInput ? String(pathsInput).split(',').map((item) => item.trim()).filter(Boolean) : configValue?.paths,
+    authProtectedPaths: authPathsInput ? String(authPathsInput).split(',').map((item) => item.trim()).filter(Boolean) : configValue?.authProtectedPaths,
+    errorPaths: errorPathsInput ? String(errorPathsInput).split(',').map((item) => item.trim()).filter(Boolean) : configValue?.errorPaths,
+    redirectParamNames: redirectParamsInput ? String(redirectParamsInput).split(',').map((item) => item.trim()).filter(Boolean) : configValue?.redirectParamNames,
     timeoutMs: timeoutInput ? Number(timeoutInput) : configValue?.timeoutMs
   };
 }

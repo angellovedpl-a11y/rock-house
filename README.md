@@ -95,6 +95,9 @@ jobs:
           markdown: rock-house-summary.md
           dast-url: http://127.0.0.1:3000
           dast-paths: /,/api/health
+          dast-auth-paths: /admin,/settings
+          dast-error-paths: /api/debug-error
+          dast-redirect-params: next,redirect
           observability-evidence: rock-house-observability.json
           baseline: rock-house-baseline.json
           fail-on-new-only: 'false'
@@ -145,6 +148,9 @@ Optional project config:
   "dast": {
     "url": "http://127.0.0.1:3000",
     "paths": ["/", "/api/health"],
+    "authProtectedPaths": ["/admin", "/settings"],
+    "errorPaths": ["/api/debug-error"],
+    "redirectParamNames": ["next", "redirect"],
     "timeoutMs": 5000
   },
   "observability": {
@@ -212,6 +218,12 @@ When `dast.url` or the Action input `dast-url` is configured, Rock House perform
 live HTTP checks against localhost or staging and can report runtime findings such
 as wildcard CORS, missing CSP, missing `nosniff`, server header disclosure, and
 stack traces in 5xx responses.
+
+Optional advanced probes:
+
+- `authProtectedPaths`: paths that must return `401`, `403`, or redirect when unauthenticated
+- `errorPaths`: paths that exercise custom error handling and must not leak stack traces
+- `redirectParamNames`: query parameter names that Rock House will probe for open redirects
 
 When `observability.evidence` or the Action input `observability-evidence` is
 configured, Rock House combines that operational evidence with code-level
