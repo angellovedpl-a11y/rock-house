@@ -36,6 +36,7 @@ async function run() {
   testInvalidStructuredApprovalErrors();
   testTamperedAssuranceDigestBlocks();
   testUnsignedAssuranceBlocks();
+  testExternalTrustPolicyPasses();
   testRevokedSigningKeyBlocks();
   testDisallowedSigningKeyBlocks();
   testAssurancePolicyEnvironmentBlocks();
@@ -445,6 +446,43 @@ function testExpiredStructuredApprovalBlocks() {
   assert.notStrictEqual(result.status, 0, 'expired approval should fail high-risk certification');
   const report = readJson(output);
   assert(report.findings.some((finding) => finding.checkId === 'R4'), 'expired structured approval must fail R4');
+}
+
+function testExternalTrustPolicyPasses() {
+  const fixture = makeTempProject('rock-house-trust-file-');
+  const assurancePath = writePolicyFixture(fixture, {
+    environment: 'production',
+    reference: 'CR-2026-058',
+    expires: '2026-06-30'
+  });
+  const keys = createSigningKeys(fixture);
+  signAssuranceFile(assurancePath, keys.privateKey, keys.keyId);
+  const trustPath = writeTrustPolicy(fixture, keys.keyId, keys.publicKey, {
+    allowedKeyIds: [keys.keyId],
+    revokedKeyIds: ['NEXT_PUBLIC_SERVICE_SECRET_TEST']
+  });
+
+  const output = path.join(fixture, 'report.json');
+  const configPath = path.join(fixture, 'rock-house.config.json');
+  writeFile(fixture, 'rock-house.config.json', JSON.stringify({
+    path: fixture,
+    minLevel: 'bronze',
+    output,
+    riskProfile: 'high',
+    assurance: assurancePath,
+    assuranceTrustFile: trustPath
+  }, null, 2));
+
+  const result = spawnSync(process.execPath, [scanner, '--config', configPath], {
+    cwd: repoRoot,
+    encoding: 'utf8'
+  });
+
+  assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+  const report = readJson(output);
+  assert.strictEqual(report.assurance.trustFile, trustPath);
+  assert(report.gates.some((gate) => gate.id === 'R6' && gate.status === 'PASS'), 'external trust policy must validate signature');
+  assert.strictEqual(report.findings.some((finding) => finding.file === 'assurance-trust.json'), false, 'trust policy manifest must be excluded from source scanning');
 }
 
 function testInvalidStructuredApprovalErrors() {
@@ -904,6 +942,7 @@ function testInvalidConfigErrors() {
   assertInvalidConfig({ minLevel: 'gold' }, 'invalid minLevel should fail');
   assertInvalidConfig({ riskProfile: 'critical' }, 'invalid riskProfile should fail');
   assertInvalidConfig({ assurance: true }, 'assurance must be string');
+  assertInvalidConfig({ assuranceTrustFile: true }, 'assuranceTrustFile must be string');
   assertInvalidConfig({ assuranceTrust: true }, 'assuranceTrust must be object');
   assertInvalidConfig({ assuranceTrust: { publicKeys: [] } }, 'assuranceTrust publicKeys must be non-empty');
   assertInvalidConfig({ assuranceTrust: { publicKeys: [{ keyId: 'a' }] } }, 'assuranceTrust public key path is required');
@@ -1040,6 +1079,17 @@ function createSigningKeys(root) {
   });
   assert.strictEqual(result.status, 0, result.stdout + result.stderr);
   return { privateKey, publicKey, keyId };
+}
+
+function writeTrustPolicy(root, keyId, publicKey, overrides = {}) {
+  const trustPath = path.join(root, 'assurance-trust.json');
+  writeFile(root, 'assurance-trust.json', JSON.stringify({
+    publicKeys: [
+      { keyId, path: publicKey }
+    ],
+    ...overrides
+  }, null, 2));
+  return trustPath;
 }
 
 function writePolicyFixture(root, approvalOverrides = {}) {

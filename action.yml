@@ -35,6 +35,10 @@ inputs:
     description: Optional key id that matches the assurance signature block.
     required: false
     default: ''
+  assurance-trust:
+    description: Optional JSON trust policy file with trusted public keys and key rotation rules.
+    required: false
+    default: ''
   dast-url:
     description: Optional localhost or staging base URL for dynamic HTTP checks.
     required: false

@@ -10,6 +10,7 @@ const CONFIG_KEYS = new Set([
   'riskProfile',
   'assurance',
   'assuranceTrust',
+  'assuranceTrustFile',
   'assurancePolicy',
   'dast',
   'observability',
@@ -86,7 +87,7 @@ function validateConfig(configValue, file) {
     }
   }
 
-  for (const key of ['path', 'minLevel', 'output', 'sarif', 'markdown', 'assurance']) {
+  for (const key of ['path', 'minLevel', 'output', 'sarif', 'markdown', 'assurance', 'assuranceTrustFile']) {
     if (configValue[key] !== undefined && typeof configValue[key] !== 'string') {
       throwUsageError(`Config key "${key}" must be a string in ${file}`);
     }
@@ -282,6 +283,20 @@ function validateAssuranceTrust(value, file) {
   });
 }
 
+function loadAssuranceTrustFile(file) {
+  if (!fs.existsSync(file)) {
+    throwUsageError(`Assurance trust file does not exist: ${file}`);
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    validateAssuranceTrust(parsed, file);
+    return parsed;
+  } catch (error) {
+    if (error && error.code === 'ROCK_HOUSE_USAGE') throw error;
+    throwUsageError(`Could not parse assurance trust file ${file}: ${error.message}`);
+  }
+}
+
 function validateAssurancePolicy(value, file) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throwUsageError(`Config key "assurancePolicy" must be an object in ${file}`);
@@ -349,6 +364,23 @@ function resolveAssuranceTrust(parsedArgs, currentConfig, fail) {
   const configValue = currentConfig.assuranceTrust && typeof currentConfig.assuranceTrust === 'object'
     ? currentConfig.assuranceTrust
     : { publicKeys: [] };
+  const trustFileInput = parsedArgs['assurance-trust'] || process.env.INPUT_ASSURANCE_TRUST || currentConfig.assuranceTrustFile;
+  const resolvedTrustFile = trustFileInput ? path.resolve(String(trustFileInput)) : '';
+  if (resolvedTrustFile) {
+    const sourceValue = loadAssuranceTrustFile(resolvedTrustFile);
+    return {
+      file: resolvedTrustFile,
+      publicKeys: Array.isArray(sourceValue.publicKeys)
+        ? sourceValue.publicKeys.map((entry) => ({
+          keyId: entry.keyId,
+          path: path.resolve(entry.path)
+        }))
+        : [],
+      revokedKeyIds: Array.isArray(sourceValue.revokedKeyIds) ? sourceValue.revokedKeyIds.slice() : [],
+      allowedKeyIds: Array.isArray(sourceValue.allowedKeyIds) ? sourceValue.allowedKeyIds.slice() : []
+    };
+  }
+
   const cliPublicKey = parsedArgs['assurance-public-key'] || process.env.INPUT_ASSURANCE_PUBLIC_KEY;
   const cliKeyId = parsedArgs['assurance-key-id'] || process.env.INPUT_ASSURANCE_KEY_ID;
   if (cliPublicKey || cliKeyId) {
@@ -356,16 +388,20 @@ function resolveAssuranceTrust(parsedArgs, currentConfig, fail) {
       fail('Both assurance-public-key and assurance-key-id are required together.');
     }
     return {
+      file: '',
       publicKeys: [
         {
           keyId: String(cliKeyId),
           path: path.resolve(String(cliPublicKey))
         }
-      ]
+      ],
+      revokedKeyIds: [],
+      allowedKeyIds: []
     };
   }
 
   return {
+    file: '',
     publicKeys: Array.isArray(configValue.publicKeys)
       ? configValue.publicKeys.map((entry) => ({
         keyId: entry.keyId,

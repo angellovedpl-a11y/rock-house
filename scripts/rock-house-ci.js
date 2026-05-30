@@ -51,6 +51,7 @@ const annotationsEnabled = readBoolean(args.annotations, process.env.INPUT_ANNOT
 const scannerArtifactPaths = new Set([
   configPath,
   assurancePath,
+  assuranceTrust.file,
   observabilityEvidencePath,
   ...assuranceTrust.publicKeys.map((entry) => entry.path),
   outputPath,
@@ -140,7 +141,8 @@ async function main() {
     config: configPath || null,
     riskProfile,
     assurance: {
-      file: assurancePath || null
+      file: assurancePath || null,
+      trustFile: assuranceTrust.file || null
     },
     dast: dastReport,
     observability: observabilityReport,

@@ -93,8 +93,7 @@ jobs:
           output: rock-house-report.json
           sarif: rock-house.sarif
           markdown: rock-house-summary.md
-          assurance-public-key: .rock-house/assurance-public.pem
-          assurance-key-id: release-signing-1
+          assurance-trust: .rock-house/assurance-trust.json
           dast-url: http://127.0.0.1:3000
           dast-paths: /,/api/health
           dast-auth-paths: /admin,/settings
@@ -182,16 +181,7 @@ For high-risk systems, attach an assurance bundle:
 {
   "riskProfile": "high",
   "assurance": "rock-house.assurance.json",
-  "assuranceTrust": {
-    "publicKeys": [
-      {
-        "keyId": "release-signing-1",
-        "path": ".rock-house/assurance-public.pem"
-      }
-    ],
-    "allowedKeyIds": ["release-signing-1"],
-    "revokedKeyIds": []
-  },
+  "assuranceTrustFile": ".rock-house/assurance-trust.json",
   "assurancePolicy": {
     "requiredEnvironment": "production",
     "referencePattern": "^CR-[0-9]{4}-[0-9]{3}$",
@@ -199,6 +189,21 @@ For high-risk systems, attach an assurance bundle:
     "requireExpires": true,
     "maxExpiryDays": 30
   }
+}
+```
+
+Example trust policy file:
+
+```json
+{
+  "publicKeys": [
+    {
+      "keyId": "release-signing-1",
+      "path": ".rock-house/assurance-public.pem"
+    }
+  ],
+  "allowedKeyIds": ["release-signing-1"],
+  "revokedKeyIds": []
 }
 ```
 
@@ -256,8 +261,13 @@ can detect changes made after approval.
 `assurancePolicy` lets the gate enforce which environment the approval covers,
 which change-reference pattern is acceptable, and how long the approval remains
 valid.
-`assuranceTrust.allowedKeyIds` and `assuranceTrust.revokedKeyIds` let you rotate
-or revoke signing keys without changing the assurance format.
+`assuranceTrustFile` lets you move signer trust and key-lifecycle policy into a
+dedicated JSON manifest. The trust file uses the same schema as the inline
+`assuranceTrust` object, which remains supported for backwards compatibility.
+`allowedKeyIds` and `revokedKeyIds` let you rotate or revoke signing keys
+without changing the assurance format.
+If you do not want a trust manifest yet, the Action still supports the legacy
+pair `assurance-public-key` + `assurance-key-id` as a minimal fallback.
 
 Generate or refresh the digest:
 
