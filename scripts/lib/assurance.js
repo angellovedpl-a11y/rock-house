@@ -22,7 +22,7 @@ function validateAssurance(value, file, fail) {
     failAssurance(`Assurance file must contain a JSON object: ${file}`, fail);
   }
 
-  const sections = ['dynamicTesting', 'monitoring', 'review', 'approval', 'integrity'];
+  const sections = ['dynamicTesting', 'monitoring', 'review', 'approval', 'integrity', 'signature'];
   for (const key of Object.keys(value)) {
     if (!sections.includes(key)) {
       failAssurance(`Unknown assurance key "${key}" in ${file}`, fail);
@@ -33,6 +33,7 @@ function validateAssurance(value, file, fail) {
   validateBooleanSection(value.review, ['completed'], 'review', file, fail);
   validateApproval(value.approval, file, fail);
   validateIntegrity(value.integrity, file, fail);
+  validateSignature(value.signature, file, fail);
   validateBooleanSection(value.monitoring, ['errorTracking', 'auditLogs', 'alerts', 'healthChecks'], 'monitoring', file, fail);
 
   validateOptionalString(value.dynamicTesting, 'environment', 'dynamicTesting', file, fail);
@@ -142,6 +143,36 @@ function validateIntegrity(section, file, fail) {
   }
 }
 
+function validateSignature(section, file, fail) {
+  if (section === undefined) return;
+  if (!section || typeof section !== 'object' || Array.isArray(section)) {
+    failAssurance(`Assurance section "signature" must be an object in ${file}`, fail);
+  }
+
+  const allowed = new Set(['schemaVersion', 'algorithm', 'keyId', 'signature']);
+  for (const key of Object.keys(section)) {
+    if (!allowed.has(key)) {
+      failAssurance(`Unknown signature field "${key}" in ${file}`, fail);
+    }
+  }
+
+  if (section.schemaVersion !== 1) {
+    failAssurance(`Assurance field "signature.schemaVersion" must be 1 in ${file}`, fail);
+  }
+
+  if (section.algorithm !== 'ed25519') {
+    failAssurance(`Assurance field "signature.algorithm" must be "ed25519" in ${file}`, fail);
+  }
+
+  if (!section.keyId || typeof section.keyId !== 'string') {
+    failAssurance(`Assurance field "signature.keyId" must be a non-empty string in ${file}`, fail);
+  }
+
+  if (!section.signature || typeof section.signature !== 'string') {
+    failAssurance(`Assurance field "signature.signature" must be a non-empty base64 string in ${file}`, fail);
+  }
+}
+
 function evaluateAssurance(options) {
   const {
     assurance,
@@ -151,6 +182,7 @@ function evaluateAssurance(options) {
     dynamicTestingEvidence,
     monitoringCoverage,
     monitoringEvidence,
+    assuranceTrust,
     addFinding,
     gates
   } = options;
@@ -226,6 +258,16 @@ function evaluateAssurance(options) {
     addFinding,
     gates
   });
+
+  evaluateBooleanRequirement(hasValidSignature(assurance, assuranceTrust), {
+    checkId: 'R6',
+    file: evidenceRef,
+    description: 'High-risk project is missing a valid assurance signature trusted by Rock House.',
+    recommendation: 'Sign the assurance bundle with a trusted private key and configure the matching public key in assuranceTrust.',
+    passNote: signaturePassNote(assurance.signature),
+    addFinding,
+    gates
+  });
 }
 
 function evaluateBooleanRequirement(value, options) {
@@ -296,8 +338,12 @@ function hasValidIntegrity(assurance) {
 }
 
 function computeAssuranceDigest(assurance) {
-  const canonical = canonicalize(removeIntegrity(assurance));
+  const canonical = canonicalize(removeSignature(removeIntegrity(assurance)));
   return crypto.createHash('sha256').update(canonical, 'utf8').digest('hex');
+}
+
+function signablePayload(assurance) {
+  return canonicalize(removeSignature(assurance));
 }
 
 function removeIntegrity(value) {
@@ -305,6 +351,16 @@ function removeIntegrity(value) {
   const clone = {};
   for (const key of Object.keys(value)) {
     if (key === 'integrity') continue;
+    clone[key] = value[key];
+  }
+  return clone;
+}
+
+function removeSignature(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const clone = {};
+  for (const key of Object.keys(value)) {
+    if (key === 'signature') continue;
     clone[key] = value[key];
   }
   return clone;
@@ -321,8 +377,34 @@ function canonicalize(value) {
   return JSON.stringify(value);
 }
 
+function hasValidSignature(assurance, assuranceTrust) {
+  if (!assurance || typeof assurance !== 'object') return false;
+  if (!assurance.signature || typeof assurance.signature !== 'object') return false;
+  if (!assuranceTrust || !Array.isArray(assuranceTrust.publicKeys) || assuranceTrust.publicKeys.length === 0) return false;
+  const entry = assuranceTrust.publicKeys.find((item) => item.keyId === assurance.signature.keyId);
+  if (!entry || !entry.path || !fs.existsSync(entry.path)) return false;
+  try {
+    const publicKey = fs.readFileSync(entry.path, 'utf8');
+    return crypto.verify(
+      null,
+      Buffer.from(signablePayload(assurance), 'utf8'),
+      publicKey,
+      Buffer.from(String(assurance.signature.signature), 'base64')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function signaturePassNote(signature) {
+  if (!signature || typeof signature !== 'object') return 'Assurance signature is valid.';
+  return `Assurance signature is valid (${signature.keyId}).`;
+}
+
 module.exports = {
   computeAssuranceDigest,
   evaluateAssurance,
-  loadAssurance
+  hasValidSignature,
+  loadAssurance,
+  signablePayload
 };

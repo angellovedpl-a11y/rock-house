@@ -9,6 +9,7 @@ const CONFIG_KEYS = new Set([
   'markdown',
   'riskProfile',
   'assurance',
+  'assuranceTrust',
   'dast',
   'observability',
   'exclude',
@@ -98,6 +99,10 @@ function validateConfig(configValue, file) {
     if (typeof configValue.riskProfile !== 'string' || !RISK_PROFILES.has(configValue.riskProfile.toLowerCase())) {
       throwUsageError(`Config key "riskProfile" must be standard or high in ${file}`);
     }
+  }
+
+  if (configValue.assuranceTrust !== undefined) {
+    validateAssuranceTrust(configValue.assuranceTrust, file);
   }
 
   if (configValue.dast !== undefined) {
@@ -229,9 +234,94 @@ function validateObservability(value, file) {
   }
 }
 
+function validateAssuranceTrust(value, file) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throwUsageError(`Config key "assuranceTrust" must be an object in ${file}`);
+  }
+
+  const allowed = new Set(['publicKeys']);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throwUsageError(`Unknown assuranceTrust key "${key}" in ${file}`);
+    }
+  }
+
+  if (!Array.isArray(value.publicKeys) || value.publicKeys.length === 0) {
+    throwUsageError(`Config key "assuranceTrust.publicKeys" must be a non-empty array in ${file}`);
+  }
+
+  value.publicKeys.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throwUsageError(`assuranceTrust.publicKeys[${index}] must be an object in ${file}`);
+    }
+    const entryAllowed = new Set(['keyId', 'path']);
+    for (const key of Object.keys(entry)) {
+      if (!entryAllowed.has(key)) {
+        throwUsageError(`Unknown assuranceTrust.publicKeys[${index}] key "${key}" in ${file}`);
+      }
+    }
+    if (!entry.keyId || typeof entry.keyId !== 'string') {
+      throwUsageError(`assuranceTrust.publicKeys[${index}].keyId must be a non-empty string in ${file}`);
+    }
+    if (!entry.path || typeof entry.path !== 'string') {
+      throwUsageError(`assuranceTrust.publicKeys[${index}].path must be a non-empty string in ${file}`);
+    }
+  });
+}
+
 function throwUsageError(message) {
   console.error(`Rock House CI error: ${message}`);
   process.exit(2);
+}
+
+function resolveDastConfig(parsedArgs, currentConfig) {
+  const configValue = currentConfig.dast && typeof currentConfig.dast === 'object' ? currentConfig.dast : null;
+  const url = parsedArgs['dast-url'] || process.env.INPUT_DAST_URL || configValue?.url;
+  if (!url) return null;
+
+  const pathsInput = parsedArgs['dast-paths'] || process.env.INPUT_DAST_PATHS;
+  const authPathsInput = parsedArgs['dast-auth-paths'] || process.env.INPUT_DAST_AUTH_PATHS;
+  const errorPathsInput = parsedArgs['dast-error-paths'] || process.env.INPUT_DAST_ERROR_PATHS;
+  const redirectParamsInput = parsedArgs['dast-redirect-params'] || process.env.INPUT_DAST_REDIRECT_PARAMS;
+  const timeoutInput = parsedArgs['dast-timeout-ms'] || process.env.INPUT_DAST_TIMEOUT_MS;
+  return {
+    url,
+    paths: pathsInput ? String(pathsInput).split(',').map((item) => item.trim()).filter(Boolean) : configValue?.paths,
+    authProtectedPaths: authPathsInput ? String(authPathsInput).split(',').map((item) => item.trim()).filter(Boolean) : configValue?.authProtectedPaths,
+    errorPaths: errorPathsInput ? String(errorPathsInput).split(',').map((item) => item.trim()).filter(Boolean) : configValue?.errorPaths,
+    redirectParamNames: redirectParamsInput ? String(redirectParamsInput).split(',').map((item) => item.trim()).filter(Boolean) : configValue?.redirectParamNames,
+    timeoutMs: timeoutInput ? Number(timeoutInput) : configValue?.timeoutMs
+  };
+}
+
+function resolveAssuranceTrust(parsedArgs, currentConfig, fail) {
+  const configValue = currentConfig.assuranceTrust && typeof currentConfig.assuranceTrust === 'object'
+    ? currentConfig.assuranceTrust
+    : { publicKeys: [] };
+  const cliPublicKey = parsedArgs['assurance-public-key'] || process.env.INPUT_ASSURANCE_PUBLIC_KEY;
+  const cliKeyId = parsedArgs['assurance-key-id'] || process.env.INPUT_ASSURANCE_KEY_ID;
+  if (cliPublicKey || cliKeyId) {
+    if (!cliPublicKey || !cliKeyId) {
+      fail('Both assurance-public-key and assurance-key-id are required together.');
+    }
+    return {
+      publicKeys: [
+        {
+          keyId: String(cliKeyId),
+          path: path.resolve(String(cliPublicKey))
+        }
+      ]
+    };
+  }
+
+  return {
+    publicKeys: Array.isArray(configValue.publicKeys)
+      ? configValue.publicKeys.map((entry) => ({
+        keyId: entry.keyId,
+        path: path.resolve(entry.path)
+      }))
+      : []
+  };
 }
 
 module.exports = {
@@ -240,5 +330,7 @@ module.exports = {
   parseArgs,
   RISK_PROFILES,
   readBoolean,
+  resolveAssuranceTrust,
+  resolveDastConfig,
   resolveConfigPath
 };

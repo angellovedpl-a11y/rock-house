@@ -7,6 +7,8 @@ const {
   loadConfig,
   parseArgs,
   readBoolean,
+  resolveAssuranceTrust,
+  resolveDastConfig,
   resolveConfigPath
 } = require('./lib/config');
 const { evaluateAssurance, loadAssurance } = require('./lib/assurance');
@@ -40,6 +42,7 @@ const baselinePath = baselineInput ? path.resolve(baselineInput) : '';
 const assuranceInput = args.assurance || process.env.INPUT_ASSURANCE || config.assurance;
 const assurancePath = assuranceInput ? path.resolve(assuranceInput) : '';
 const assurance = loadAssurance(assurancePath, fail);
+const assuranceTrust = resolveAssuranceTrust(args, config);
 const observabilityEvidencePath = observability?.evidence ? path.resolve(observability.evidence) : '';
 const baselineFingerprints = loadBaseline(baselinePath);
 const failOnNewOnly = readBoolean(args['fail-on-new-only'], process.env.INPUT_FAIL_ON_NEW_ONLY, config.failOnNewOnly);
@@ -48,6 +51,7 @@ const scannerArtifactPaths = new Set([
   configPath,
   assurancePath,
   observabilityEvidencePath,
+  ...assuranceTrust.publicKeys.map((entry) => entry.path),
   outputPath,
   sarifPath,
   markdownPath,
@@ -104,6 +108,7 @@ async function main() {
     dynamicTestingEvidence: dastReport.executed ? `Dynamic DAST completed against ${dastReport.url}.` : '',
     monitoringCoverage: observabilityReport.coverage,
     monitoringEvidence: observabilityReport.note,
+    assuranceTrust,
     addFinding,
     gates
   });
@@ -181,25 +186,6 @@ async function main() {
   }
 }
 
-function resolveDastConfig(parsedArgs, currentConfig) {
-  const configValue = currentConfig.dast && typeof currentConfig.dast === 'object' ? currentConfig.dast : null;
-  const url = parsedArgs['dast-url'] || process.env.INPUT_DAST_URL || configValue?.url;
-  if (!url) return null;
-
-  const pathsInput = parsedArgs['dast-paths'] || process.env.INPUT_DAST_PATHS;
-  const authPathsInput = parsedArgs['dast-auth-paths'] || process.env.INPUT_DAST_AUTH_PATHS;
-  const errorPathsInput = parsedArgs['dast-error-paths'] || process.env.INPUT_DAST_ERROR_PATHS;
-  const redirectParamsInput = parsedArgs['dast-redirect-params'] || process.env.INPUT_DAST_REDIRECT_PARAMS;
-  const timeoutInput = parsedArgs['dast-timeout-ms'] || process.env.INPUT_DAST_TIMEOUT_MS;
-  return {
-    url,
-    paths: pathsInput ? String(pathsInput).split(',').map((item) => item.trim()).filter(Boolean) : configValue?.paths,
-    authProtectedPaths: authPathsInput ? String(authPathsInput).split(',').map((item) => item.trim()).filter(Boolean) : configValue?.authProtectedPaths,
-    errorPaths: errorPathsInput ? String(errorPathsInput).split(',').map((item) => item.trim()).filter(Boolean) : configValue?.errorPaths,
-    redirectParamNames: redirectParamsInput ? String(redirectParamsInput).split(',').map((item) => item.trim()).filter(Boolean) : configValue?.redirectParamNames,
-    timeoutMs: timeoutInput ? Number(timeoutInput) : configValue?.timeoutMs
-  };
-}
 
 function loadBaseline(file) {
   if (!file) return new Set();

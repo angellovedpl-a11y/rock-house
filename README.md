@@ -93,6 +93,8 @@ jobs:
           output: rock-house-report.json
           sarif: rock-house.sarif
           markdown: rock-house-summary.md
+          assurance-public-key: .rock-house/assurance-public.pem
+          assurance-key-id: release-signing-1
           dast-url: http://127.0.0.1:3000
           dast-paths: /,/api/health
           dast-auth-paths: /admin,/settings
@@ -179,7 +181,15 @@ For high-risk systems, attach an assurance bundle:
 ```json
 {
   "riskProfile": "high",
-  "assurance": "rock-house.assurance.json"
+  "assurance": "rock-house.assurance.json",
+  "assuranceTrust": {
+    "publicKeys": [
+      {
+        "keyId": "release-signing-1",
+        "path": ".rock-house/assurance-public.pem"
+      }
+    ]
+  }
 }
 ```
 
@@ -217,6 +227,12 @@ Example assurance file:
     "schemaVersion": 1,
     "algorithm": "sha256",
     "digest": "generated-by-rock-house-assurance"
+  },
+  "signature": {
+    "schemaVersion": 1,
+    "algorithm": "ed25519",
+    "keyId": "release-signing-1",
+    "signature": "generated-by-rock-house-assurance"
   }
 }
 ```
@@ -233,6 +249,25 @@ Generate or refresh the digest:
 
 ```bash
 node scripts/rock-house-assurance.js --file rock-house.assurance.json --write
+```
+
+Generate a signing key pair:
+
+```bash
+node scripts/rock-house-assurance-keygen.js \
+  --private-out .rock-house/assurance-private.pem \
+  --public-out .rock-house/assurance-public.pem
+```
+
+Write integrity and signature:
+
+```bash
+node scripts/rock-house-assurance.js \
+  --file rock-house.assurance.json \
+  --write \
+  --sign \
+  --private-key .rock-house/assurance-private.pem \
+  --key-id release-signing-1
 ```
 
 When `dast.url` or the Action input `dast-url` is configured, Rock House performs
@@ -371,6 +406,7 @@ rock-house/
 │   ├── defense-in-depth.md # Theory + examples
 │   └── operational.md     # WAF, MFA, logs guide
 ├── scripts/
+│   ├── rock-house-assurance-keygen.js # Ed25519 key-pair helper
 │   ├── rock-house-assurance.js # Assurance digest helper
 │   ├── rock-house-ci.js  # Dependency-free JSON security gate for CI
 │   ├── lib/

@@ -27,6 +27,14 @@ inputs:
     description: Optional Markdown summary output path.
     required: false
     default: ''
+  assurance-public-key:
+    description: Optional trusted public key PEM used to verify assurance signatures.
+    required: false
+    default: ''
+  assurance-key-id:
+    description: Optional key id that matches the assurance signature block.
+    required: false
+    default: ''
   dast-url:
     description: Optional localhost or staging base URL for dynamic HTTP checks.
     required: false

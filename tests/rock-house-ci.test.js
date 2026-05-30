@@ -10,6 +10,7 @@ const { spawn, spawnSync } = require('child_process');
 const repoRoot = path.resolve(__dirname, '..');
 const scanner = path.join(repoRoot, 'scripts', 'rock-house-ci.js');
 const assuranceTool = path.join(repoRoot, 'scripts', 'rock-house-assurance.js');
+const assuranceKeygenTool = path.join(repoRoot, 'scripts', 'rock-house-assurance-keygen.js');
 
 run().catch((error) => {
   console.error(error);
@@ -34,6 +35,7 @@ async function run() {
   testExpiredStructuredApprovalBlocks();
   testInvalidStructuredApprovalErrors();
   testTamperedAssuranceDigestBlocks();
+  testUnsignedAssuranceBlocks();
   testMissingPathErrors();
   testMissingConfigErrors();
   testInvalidConfigErrors();
@@ -338,7 +340,8 @@ async function testHighRiskAssuranceUsesDastEvidence() {
       reference: 'CR-2026-051'
     }
   }, null, 2));
-  signAssuranceFile(path.join(fixture, 'assurance.json'));
+  const keys = createSigningKeys(fixture);
+  signAssuranceFile(path.join(fixture, 'assurance.json'), keys.privateKey, keys.keyId);
   writeFile(fixture, 'observability.json', JSON.stringify({
     auditLogs: true,
     alerts: true
@@ -352,6 +355,11 @@ async function testHighRiskAssuranceUsesDastEvidence() {
     output,
     riskProfile: 'high',
     assurance: path.join(fixture, 'assurance.json'),
+    assuranceTrust: {
+      publicKeys: [
+        { keyId: keys.keyId, path: keys.publicKey }
+      ]
+    },
     observability: {
       evidence: path.join(fixture, 'observability.json')
     },
@@ -406,7 +414,8 @@ function testExpiredStructuredApprovalBlocks() {
       expires: '2026-05-29'
     }
   }, null, 2));
-  signAssuranceFile(path.join(fixture, 'assurance.json'));
+  const keys = createSigningKeys(fixture);
+  signAssuranceFile(path.join(fixture, 'assurance.json'), keys.privateKey, keys.keyId);
 
   const output = path.join(fixture, 'report.json');
   const configPath = path.join(fixture, 'rock-house.config.json');
@@ -415,7 +424,12 @@ function testExpiredStructuredApprovalBlocks() {
     minLevel: 'bronze',
     output,
     riskProfile: 'high',
-    assurance: path.join(fixture, 'assurance.json')
+    assurance: path.join(fixture, 'assurance.json'),
+    assuranceTrust: {
+      publicKeys: [
+        { keyId: keys.keyId, path: keys.publicKey }
+      ]
+    }
   }, null, 2));
 
   const result = spawnSync(process.execPath, [scanner, '--config', configPath], {
@@ -496,7 +510,8 @@ function testTamperedAssuranceDigestBlocks() {
       reference: 'CR-2026-053'
     }
   }, null, 2));
-  signAssuranceFile(assurancePath);
+  const keys = createSigningKeys(fixture);
+  signAssuranceFile(assurancePath, keys.privateKey, keys.keyId);
 
   const assurance = readJson(assurancePath);
   assurance.approval.scope = 'tampered scope';
@@ -509,7 +524,12 @@ function testTamperedAssuranceDigestBlocks() {
     minLevel: 'bronze',
     output,
     riskProfile: 'high',
-    assurance: assurancePath
+    assurance: assurancePath,
+    assuranceTrust: {
+      publicKeys: [
+        { keyId: keys.keyId, path: keys.publicKey }
+      ]
+    }
   }, null, 2));
 
   const result = spawnSync(process.execPath, [scanner, '--config', configPath], {
@@ -520,6 +540,61 @@ function testTamperedAssuranceDigestBlocks() {
   assert.notStrictEqual(result.status, 0, 'tampered assurance digest should fail high-risk certification');
   const report = readJson(output);
   assert(report.findings.some((finding) => finding.checkId === 'R5'), 'tampered assurance digest must fail R5');
+  assert(report.findings.some((finding) => finding.checkId === 'R6'), 'tampered assurance signature must fail R6');
+}
+
+function testUnsignedAssuranceBlocks() {
+  const fixture = makeTempProject('rock-house-unsigned-assurance-');
+  writeFile(fixture, 'package.json', JSON.stringify({
+    name: 'unsigned-assurance-fixture',
+    private: true
+  }, null, 2));
+  writeFile(fixture, 'package-lock.json', JSON.stringify({
+    name: 'unsigned-assurance-fixture',
+    lockfileVersion: 3,
+    packages: {}
+  }, null, 2));
+  const assurancePath = path.join(fixture, 'assurance.json');
+  writeFile(fixture, 'assurance.json', JSON.stringify({
+    dynamicTesting: { completed: true, environment: 'staging', date: '2026-05-30' },
+    monitoring: { errorTracking: true, auditLogs: true, alerts: true, healthChecks: true },
+    review: { completed: true, reviewer: 'security-team', date: '2026-05-30' },
+    approval: {
+      schemaVersion: 1,
+      status: 'approved',
+      approver: 'release-manager',
+      date: '2026-05-30',
+      environment: 'production',
+      scope: 'payments rollout',
+      reference: 'CR-2026-054'
+    }
+  }, null, 2));
+  const keys = createSigningKeys(fixture);
+  writeAssuranceIntegrity(assurancePath);
+
+  const output = path.join(fixture, 'report.json');
+  const configPath = path.join(fixture, 'rock-house.config.json');
+  writeFile(fixture, 'rock-house.config.json', JSON.stringify({
+    path: fixture,
+    minLevel: 'bronze',
+    output,
+    riskProfile: 'high',
+    assurance: assurancePath,
+    assuranceTrust: {
+      publicKeys: [
+        { keyId: keys.keyId, path: keys.publicKey }
+      ]
+    }
+  }, null, 2));
+
+  const result = spawnSync(process.execPath, [scanner, '--config', configPath], {
+    cwd: repoRoot,
+    encoding: 'utf8'
+  });
+
+  assert.notStrictEqual(result.status, 0, 'unsigned assurance should fail high-risk certification');
+  const report = readJson(output);
+  assert(report.findings.some((finding) => finding.checkId === 'R6'), 'missing signature must fail R6');
 }
 
 function testSuppressionsAreAudited() {
@@ -747,6 +822,9 @@ function testInvalidConfigErrors() {
   assertInvalidConfig({ minLevel: 'gold' }, 'invalid minLevel should fail');
   assertInvalidConfig({ riskProfile: 'critical' }, 'invalid riskProfile should fail');
   assertInvalidConfig({ assurance: true }, 'assurance must be string');
+  assertInvalidConfig({ assuranceTrust: true }, 'assuranceTrust must be object');
+  assertInvalidConfig({ assuranceTrust: { publicKeys: [] } }, 'assuranceTrust publicKeys must be non-empty');
+  assertInvalidConfig({ assuranceTrust: { publicKeys: [{ keyId: 'a' }] } }, 'assuranceTrust public key path is required');
   assertInvalidConfig({ dast: true }, 'dast must be object');
   assertInvalidConfig({ dast: { url: 123 } }, 'dast url must be string');
   assertInvalidConfig({ dast: { url: 'http://127.0.0.1:3000', timeoutMs: 0 } }, 'dast timeout must be positive');
@@ -849,12 +927,32 @@ function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-function signAssuranceFile(file) {
+function signAssuranceFile(file, privateKey, keyId) {
+  const result = spawnSync(process.execPath, [assuranceTool, '--file', file, '--write', '--sign', '--private-key', privateKey, '--key-id', keyId], {
+    cwd: repoRoot,
+    encoding: 'utf8'
+  });
+  assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+}
+
+function writeAssuranceIntegrity(file) {
   const result = spawnSync(process.execPath, [assuranceTool, '--file', file, '--write'], {
     cwd: repoRoot,
     encoding: 'utf8'
   });
   assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+}
+
+function createSigningKeys(root) {
+  const privateKey = path.join(root, 'assurance-private.pem');
+  const publicKey = path.join(root, 'assurance-public.pem');
+  const keyId = 'release-signing-1';
+  const result = spawnSync(process.execPath, [assuranceKeygenTool, '--private-out', privateKey, '--public-out', publicKey], {
+    cwd: repoRoot,
+    encoding: 'utf8'
+  });
+  assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+  return { privateKey, publicKey, keyId };
 }
 
 function startServer(handler) {
