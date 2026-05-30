@@ -2,9 +2,56 @@
 
 > Build your code in a house of stone, not straw.
 
-Security audit and defense-in-depth skill for [Claude Code](https://claude.ai/code). Analyzes web projects for vulnerabilities using independent defense layers — inspired by the Three Little Pigs.
+[![CI](https://github.com/angellovedpl-a11y/rock-house/actions/workflows/ci.yml/badge.svg)](https://github.com/angellovedpl-a11y/rock-house/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+
+Security gate for AI-generated web apps. Rock House runs as a GitHub Action,
+local CI scanner, and [Claude Code](https://claude.ai/code) skill. It blocks
+unsafe deploys, collects evidence for high-risk systems, and turns security
+review into a repeatable gate instead of an informal checklist.
 
 Rock House is an internal security gate. It raises the assurance level of a project by collecting evidence, blocking unsafe deploys, and showing what is still unknown. It does not replace pentesting, production monitoring, or expert review for high-risk systems.
+
+## Why Teams Adopt It
+
+- catches high-signal deploy blockers without installing dependencies
+- returns an operational decision: `Bloqueado`, `Bronze`, `Prata`, or `Ouro`
+- supports signed assurance for high-risk deploys
+- emits JSON, SARIF, Markdown, and GitHub annotations from the same run
+- works for CI first, with Claude Code as the deeper interactive review layer
+
+## Quick Start
+
+Use Rock House as a PR gate in under two minutes:
+
+```yaml
+name: Security
+
+on:
+  pull_request:
+
+jobs:
+  rock-house:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: angellovedpl-a11y/rock-house@v0.1.0
+        with:
+          path: .
+          min-level: prata
+```
+
+Or run it locally against the vulnerable demo:
+
+```bash
+node scripts/rock-house-ci.js \
+  --path examples/vulnerable-next-supabase \
+  --min-level prata \
+  --output rock-house-report.json
+```
+
+Expected result: `Bloqueado`, with findings for service-role exposure, IDOR,
+XSS, permissive CORS, and missing dependency evidence.
 
 ## What It Does
 
@@ -29,7 +76,23 @@ Rock House scans your code for attack vectors across 5 categories, tests if your
 **5 stacks supported:**
 HTML/JS, Next.js/React, Supabase/PostgreSQL, Flask/Python, Infrastructure
 
-## Install
+## Proof of Value
+
+Rock House already ships with reproducible outcomes in this repository:
+
+| Scenario | Expected outcome |
+|----------|------------------|
+| `examples/vulnerable-next-supabase` | `Bloqueado` with critical findings |
+| Clean fixture in CI tests | `passed`, no critical/high findings |
+| High-risk fixture with signed assurance, DAST, and observability evidence | `passed`, assurance gates green |
+
+The local test suite exercises all three paths:
+
+```bash
+node tests/rock-house-ci.test.js
+```
+
+## Claude Code Install
 
 ```bash
 # Clone to a local directory
@@ -85,7 +148,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: angellovedpl-a11y/rock-house@v0
+      - uses: angellovedpl-a11y/rock-house@v0.1.0
         with:
           path: .
           config: rock-house.config.json
@@ -361,12 +424,6 @@ Invalid config blocks the scanner before analysis starts. Rock House rejects
 unknown config keys, invalid `minLevel`, wrong value types, suppressions without
 `reason`, invalid suppression severity, and invalid expiration dates.
 
-Run the scanner tests:
-
-```bash
-node tests/rock-house-ci.test.js
-```
-
 ## Score System
 
 Every audit produces a 0-10 score:
@@ -402,6 +459,9 @@ rock-house/
 ├── SKILL.md              # Entry point (101 lines)
 ├── action.yml            # GitHub Action entry point
 ├── .github/
+│   ├── ISSUE_TEMPLATE/   # Bug report, feature request, adoption feedback
+│   ├── PULL_REQUEST_TEMPLATE.md # Validation checklist for changes
+│   ├── release.yml       # Release note categories
 │   └── workflows/
 │       └── ci.yml        # Self-test workflow
 ├── modes/
@@ -462,6 +522,12 @@ rock-house/
 ## License
 
 MIT
+
+## Community
+
+- report security issues privately through [`.github/SECURITY.md`](./.github/SECURITY.md)
+- use the GitHub issue forms for bugs, feature requests, and adoption feedback
+- releases follow semantic tags so CI users can pin exact versions
 
 ## Author
 

@@ -1,0 +1,41 @@
+name: Feature request
+description: Propose a scanner, assurance, DAST, or workflow improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Explain the operational gap.
+      placeholder: We need Rock House to...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the capability you want.
+      placeholder: Add a gate for...
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface area
+      options:
+        - GitHub Action
+        - Local CI scanner
+        - Claude Code skill
+        - High-risk assurance
+        - DAST
+        - Observability evidence
+        - Documentation/examples
+    validations:
+      required: true
+  - type: textarea
+    id: adoption
+    attributes:
+      label: Adoption impact
+      description: Explain how this helps shipping, trust, or integration.

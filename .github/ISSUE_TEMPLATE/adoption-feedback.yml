@@ -1,0 +1,32 @@
+name: Adoption feedback
+description: Share how Rock House behaved in a real repository.
+title: "[Adoption]: "
+labels:
+  - feedback
+body:
+  - type: textarea
+    id: repo-shape
+    attributes:
+      label: Repository profile
+      description: Describe the kind of project without disclosing anything sensitive.
+      placeholder: Next.js app with Supabase auth and GitHub Actions deploys
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What certification/result did Rock House produce and was it useful?
+      placeholder: Rock House blocked the deploy because...
+    validations:
+      required: true
+  - type: textarea
+    id: friction
+    attributes:
+      label: Friction points
+      description: What slowed adoption or required extra setup?
+  - type: textarea
+    id: missing
+    attributes:
+      label: Missing capability
+      description: What would make Rock House easier to adopt in similar repos?
