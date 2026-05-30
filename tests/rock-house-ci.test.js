@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 
 const assert = require('assert');
+const http = require('http');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const repoRoot = path.resolve(__dirname, '..');
 const scanner = path.join(repoRoot, 'scripts', 'rock-house-ci.js');
 
-run();
+run().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
 
-function run() {
+async function run() {
   testVulnerableDemoBlocks();
   testCleanFixturePasses();
   testConfigControlsScan();
@@ -22,8 +26,9 @@ function run() {
   testGeneratedArtifactsDirectoryIsIgnored();
   testEscapedInnerHtmlDoesNotCreateFinding();
   testMalformedPnpmWorkspaceIsReported();
+  await testDastDetectsRuntimeHeaders();
   testHighRiskWithoutAssuranceBlocks();
-  testHighRiskAssuranceAllowsProgress();
+  await testHighRiskAssuranceUsesDastEvidence();
   testMissingPathErrors();
   testMissingConfigErrors();
   testInvalidConfigErrors();
@@ -198,7 +203,52 @@ function testHighRiskWithoutAssuranceBlocks() {
   assert(report.findings.some((finding) => finding.checkId === 'R0'), 'missing assurance bundle must be reported');
 }
 
-function testHighRiskAssuranceAllowsProgress() {
+async function testDastDetectsRuntimeHeaders() {
+  const server = await startServer((req, res) => {
+    res.statusCode = 200;
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('X-Powered-By', 'express');
+    res.end('<html><body>ok</body></html>');
+  });
+
+  try {
+    const fixture = makeTempProject('rock-house-dast-runtime-');
+    writeFile(fixture, 'app/page.tsx', 'export default function Page() { return <div>ok</div>; }');
+    const output = path.join(fixture, 'report.json');
+    const configPath = path.join(fixture, 'rock-house.config.json');
+    writeFile(fixture, 'rock-house.config.json', JSON.stringify({
+      path: fixture,
+      minLevel: 'bronze',
+      output,
+      dast: {
+        url: server.url,
+        paths: ['/'],
+        timeoutMs: 2000
+      }
+    }, null, 2));
+
+    const result = await runScannerAsyncFromConfig(configPath);
+
+    assert.notStrictEqual(result.status, 0, 'runtime CORS issue should keep certification below bronze target when critical');
+    const report = readJson(output);
+    assert.strictEqual(report.dast.executed, true);
+    assert(report.findings.some((finding) => finding.checkId === 'H1'), 'dynamic scan should detect missing CSP');
+    assert(report.findings.some((finding) => finding.checkId === 'H4'), 'dynamic scan should detect wildcard CORS with credentials');
+  } finally {
+    await closeServer(server.instance);
+  }
+}
+
+async function testHighRiskAssuranceUsesDastEvidence() {
+  const server = await startServer((req, res) => {
+    res.statusCode = 200;
+    res.setHeader('Content-Security-Policy', "default-src 'self'");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.end('ok');
+  });
+
+  try {
   const fixture = makeTempProject('rock-house-high-risk-assurance-');
   writeFile(fixture, 'package.json', JSON.stringify({
     name: 'high-risk-assurance-fixture',
@@ -211,7 +261,6 @@ function testHighRiskAssuranceAllowsProgress() {
   }, null, 2));
   writeFile(fixture, 'app/api/payments/route.ts', 'export async function POST() { return Response.json({ ok: true }); }');
   writeFile(fixture, 'assurance.json', JSON.stringify({
-    dynamicTesting: { completed: true, environment: 'staging', date: '2026-05-30' },
     monitoring: { errorTracking: true, auditLogs: true, alerts: true, healthChecks: true },
     review: { completed: true, reviewer: 'security-team', date: '2026-05-30' },
     approval: { humanApproved: true, approver: 'release-manager', date: '2026-05-30' }
@@ -224,13 +273,15 @@ function testHighRiskAssuranceAllowsProgress() {
     minLevel: 'bronze',
     output,
     riskProfile: 'high',
-    assurance: path.join(fixture, 'assurance.json')
+    assurance: path.join(fixture, 'assurance.json'),
+    dast: {
+      url: server.url,
+      paths: ['/'],
+      timeoutMs: 2000
+    }
   }, null, 2));
 
-  const result = spawnSync(process.execPath, [scanner, '--config', configPath], {
-    cwd: repoRoot,
-    encoding: 'utf8'
-  });
+  const result = await runScannerAsyncFromConfig(configPath);
 
   assert.strictEqual(result.status, 0, result.stdout + result.stderr);
   const report = readJson(output);
@@ -239,6 +290,9 @@ function testHighRiskAssuranceAllowsProgress() {
   assert.strictEqual(report.assurance.file, path.join(fixture, 'assurance.json'));
   assert.strictEqual(report.findings.some((finding) => /^R[0-4]$/.test(finding.checkId)), false, 'assurance findings should not exist when bundle is complete');
   assert(report.gates.some((gate) => gate.id === 'R1' && gate.status === 'PASS'), 'dynamic testing gate should pass');
+  } finally {
+    await closeServer(server.instance);
+  }
 }
 
 function testSuppressionsAreAudited() {
@@ -466,6 +520,9 @@ function testInvalidConfigErrors() {
   assertInvalidConfig({ minLevel: 'gold' }, 'invalid minLevel should fail');
   assertInvalidConfig({ riskProfile: 'critical' }, 'invalid riskProfile should fail');
   assertInvalidConfig({ assurance: true }, 'assurance must be string');
+  assertInvalidConfig({ dast: true }, 'dast must be object');
+  assertInvalidConfig({ dast: { url: 123 } }, 'dast url must be string');
+  assertInvalidConfig({ dast: { url: 'http://127.0.0.1:3000', timeoutMs: 0 } }, 'dast timeout must be positive');
   assertInvalidConfig({ exclude: 'docs' }, 'exclude must be array of strings');
   assertInvalidConfig({ allowCriticalSuppressions: 'yes' }, 'allowCriticalSuppressions must be boolean');
   assertInvalidConfig({ failOnNewOnly: 'yes' }, 'failOnNewOnly must be boolean');
@@ -525,6 +582,27 @@ function runScanner(target, output, minLevel, options = {}) {
   });
 }
 
+function runScannerAsyncFromConfig(configPath) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [scanner, '--config', configPath], {
+      cwd: repoRoot,
+      env: process.env
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('close', (status) => {
+      resolve({ status, stdout, stderr });
+    });
+  });
+}
+
 function makeTempProject(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
@@ -537,4 +615,27 @@ function writeFile(root, relativePath, content) {
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+function startServer(handler) {
+  const server = http.createServer(handler);
+  return new Promise((resolve, reject) => {
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      resolve({
+        instance: server,
+        url: `http://127.0.0.1:${address.port}`
+      });
+    });
+    server.on('error', reject);
+  });
+}
+
+function closeServer(server) {
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
 }

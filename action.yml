@@ -27,6 +27,18 @@ inputs:
     description: Optional Markdown summary output path.
     required: false
     default: ''
+  dast-url:
+    description: Optional localhost or staging base URL for dynamic HTTP checks.
+    required: false
+    default: ''
+  dast-paths:
+    description: Optional comma-separated path list for dynamic HTTP checks.
+    required: false
+    default: ''
+  dast-timeout-ms:
+    description: Optional timeout in milliseconds for each dynamic HTTP request.
+    required: false
+    default: ''
   baseline:
     description: Optional previous Rock House JSON report used as baseline.
     required: false

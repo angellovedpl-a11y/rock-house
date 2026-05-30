@@ -9,6 +9,7 @@ const CONFIG_KEYS = new Set([
   'markdown',
   'riskProfile',
   'assurance',
+  'dast',
   'exclude',
   'allowCriticalSuppressions',
   'suppressions',
@@ -98,6 +99,10 @@ function validateConfig(configValue, file) {
     }
   }
 
+  if (configValue.dast !== undefined) {
+    validateDast(configValue.dast, file);
+  }
+
   if (configValue.exclude !== undefined) {
     validateStringArray(configValue.exclude, 'exclude', file);
   }
@@ -160,6 +165,33 @@ function validateSuppression(item, index, file) {
 
   if (item.expires && Number.isNaN(new Date(item.expires).getTime())) {
     throwUsageError(`Suppression expires at index ${index} must be a valid date in ${file}`);
+  }
+}
+
+function validateDast(value, file) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throwUsageError(`Config key "dast" must be an object in ${file}`);
+  }
+
+  const allowed = new Set(['url', 'paths', 'timeoutMs']);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throwUsageError(`Unknown dast key "${key}" in ${file}`);
+    }
+  }
+
+  if (!value.url || typeof value.url !== 'string') {
+    throwUsageError(`Config key "dast.url" must be a non-empty string in ${file}`);
+  }
+
+  if (value.paths !== undefined) {
+    validateStringArray(value.paths, 'dast.paths', file);
+  }
+
+  if (value.timeoutMs !== undefined) {
+    if (typeof value.timeoutMs !== 'number' || !Number.isFinite(value.timeoutMs) || value.timeoutMs <= 0) {
+      throwUsageError(`Config key "dast.timeoutMs" must be a positive number in ${file}`);
+    }
   }
 }
 

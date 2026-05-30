@@ -93,6 +93,8 @@ jobs:
           output: rock-house-report.json
           sarif: rock-house.sarif
           markdown: rock-house-summary.md
+          dast-url: http://127.0.0.1:3000
+          dast-paths: /,/api/health
           baseline: rock-house-baseline.json
           fail-on-new-only: 'false'
       - uses: actions/upload-artifact@v4
@@ -139,6 +141,11 @@ Optional project config:
   "path": ".",
   "minLevel": "prata",
   "riskProfile": "standard",
+  "dast": {
+    "url": "http://127.0.0.1:3000",
+    "paths": ["/", "/api/health"],
+    "timeoutMs": 5000
+  },
   "output": "rock-house-report.json",
   "sarif": "rock-house.sarif",
   "markdown": "rock-house-summary.md",
@@ -196,6 +203,11 @@ Example assurance file:
 
 When `riskProfile` is `high`, Rock House blocks certification if dynamic testing,
 runtime monitoring, specialized review, or human approval evidence is missing.
+
+When `dast.url` or the Action input `dast-url` is configured, Rock House performs
+live HTTP checks against localhost or staging and can report runtime findings such
+as wildcard CORS, missing CSP, missing `nosniff`, server header disclosure, and
+stack traces in 5xx responses.
 
 Use it locally:
 
@@ -318,7 +330,9 @@ rock-house/
 ├── scripts/
 │   ├── rock-house-ci.js  # Dependency-free JSON security gate for CI
 │   ├── lib/
+│   │   ├── assurance.js  # High-risk assurance evidence validation
 │   │   ├── config.js     # CLI/config parsing and validation
+│   │   ├── dast.js       # Dynamic localhost/staging HTTP checks
 │   │   ├── js-detection.js # JavaScript sink detection helpers
 │   │   ├── report-formatters.js # Markdown and SARIF output
 │   │   ├── rules.js      # Rule metadata and severity impact

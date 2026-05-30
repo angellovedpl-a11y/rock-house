@@ -78,6 +78,8 @@ function evaluateAssurance(options) {
     assurance,
     assuranceFile,
     riskProfile,
+    dynamicTestingCompleted,
+    dynamicTestingEvidence,
     addFinding,
     gates
   } = options;
@@ -104,12 +106,12 @@ function evaluateAssurance(options) {
     return;
   }
 
-  evaluateBooleanRequirement(assurance.dynamicTesting?.completed, {
+  evaluateBooleanRequirement(assurance.dynamicTesting?.completed === true || dynamicTestingCompleted === true, {
     checkId: 'R1',
     file: evidenceRef,
     description: 'High-risk project is missing evidence of dynamic security testing.',
     recommendation: 'Attach DAST or pentest evidence in the assurance bundle before deploy.',
-    passNote: `Dynamic testing evidence present${assurance.dynamicTesting?.environment ? ` (${assurance.dynamicTesting.environment})` : ''}.`,
+    passNote: dynamicTestingEvidence || `Dynamic testing evidence present${assurance.dynamicTesting?.environment ? ` (${assurance.dynamicTesting.environment})` : ''}.`,
     addFinding,
     gates
   });

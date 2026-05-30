@@ -10,6 +10,7 @@ const {
   resolveConfigPath
 } = require('./lib/config');
 const { evaluateAssurance, loadAssurance } = require('./lib/assurance');
+const { runDast } = require('./lib/dast');
 const { shouldFlagInnerHtml } = require('./lib/js-detection');
 const { toMarkdown, toSarif } = require('./lib/report-formatters');
 const { impactFor, ruleFor } = require('./lib/rules');
@@ -28,6 +29,7 @@ const markdownInput = args.markdown || process.env.INPUT_MARKDOWN || config.mark
 const markdownPath = markdownInput ? path.resolve(markdownInput) : '';
 const minLevel = (args['min-level'] || process.env.INPUT_MIN_LEVEL || config.minLevel || 'prata').toLowerCase();
 const riskProfile = String(args['risk-profile'] || process.env.INPUT_RISK_PROFILE || config.riskProfile || 'standard').toLowerCase();
+const dast = resolveDastConfig(args, config);
 const extraExclude = Array.isArray(config.exclude) ? config.exclude.map(normalizePath) : [];
 const suppressions = Array.isArray(config.suppressions) ? config.suppressions : [];
 const allowCriticalSuppressions = config.allowCriticalSuppressions === true;
@@ -41,6 +43,7 @@ const failOnNewOnly = readBoolean(args['fail-on-new-only'], process.env.INPUT_FA
 const annotationsEnabled = readBoolean(args.annotations, process.env.INPUT_ANNOTATIONS, config.annotations, true);
 const scannerArtifactPaths = new Set([
   configPath,
+  assurancePath,
   outputPath,
   sarifPath,
   markdownPath,
@@ -69,9 +72,11 @@ const suppressed = [];
 const unknown = [];
 const gates = [];
 
-main();
+main().catch((error) => {
+  fail(error.message);
+});
 
-function main() {
+async function main() {
   if (!fs.existsSync(targetRoot)) {
     fail(`Target path does not exist: ${targetRoot}`);
   }
@@ -85,7 +90,16 @@ function main() {
   scanPackageJson(packageJsonPath, hasPackageJson);
   scanLockfile(hasPackageJson);
   scanPnpmWorkspace(targetRoot, hasPackageJson, addFinding);
-  evaluateAssurance({ assurance, assuranceFile: assurancePath, riskProfile, addFinding, gates });
+  const dastReport = await runDast({ dast, addFinding, addUnknown, gates, fail });
+  evaluateAssurance({
+    assurance,
+    assuranceFile: assurancePath,
+    riskProfile,
+    dynamicTestingCompleted: dastReport.executed,
+    dynamicTestingEvidence: dastReport.executed ? `Dynamic DAST completed against ${dastReport.url}.` : '',
+    addFinding,
+    gates
+  });
 
   if (!hasGit) {
     addUnknown('S2', 'Secrets', 'No .git directory found; git history scan unavailable.', 'Run in a git checkout and run Gitleaks history scan.', 'Ouro');
@@ -114,6 +128,7 @@ function main() {
     assurance: {
       file: assurancePath || null
     },
+    dast: dastReport,
     result,
     certification,
     score,
@@ -156,6 +171,20 @@ function main() {
   if (result === 'blocked' || actualRank < minRank) {
     process.exitCode = 1;
   }
+}
+
+function resolveDastConfig(parsedArgs, currentConfig) {
+  const configValue = currentConfig.dast && typeof currentConfig.dast === 'object' ? currentConfig.dast : null;
+  const url = parsedArgs['dast-url'] || process.env.INPUT_DAST_URL || configValue?.url;
+  if (!url) return null;
+
+  const pathsInput = parsedArgs['dast-paths'] || process.env.INPUT_DAST_PATHS;
+  const timeoutInput = parsedArgs['dast-timeout-ms'] || process.env.INPUT_DAST_TIMEOUT_MS;
+  return {
+    url,
+    paths: pathsInput ? String(pathsInput).split(',').map((item) => item.trim()).filter(Boolean) : configValue?.paths,
+    timeoutMs: timeoutInput ? Number(timeoutInput) : configValue?.timeoutMs
+  };
 }
 
 function loadBaseline(file) {
