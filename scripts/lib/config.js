@@ -244,7 +244,7 @@ function validateAssuranceTrust(value, file) {
     throwUsageError(`Config key "assuranceTrust" must be an object in ${file}`);
   }
 
-  const allowed = new Set(['publicKeys']);
+  const allowed = new Set(['publicKeys', 'revokedKeyIds', 'allowedKeyIds']);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) {
       throwUsageError(`Unknown assuranceTrust key "${key}" in ${file}`);
@@ -253,6 +253,14 @@ function validateAssuranceTrust(value, file) {
 
   if (!Array.isArray(value.publicKeys) || value.publicKeys.length === 0) {
     throwUsageError(`Config key "assuranceTrust.publicKeys" must be a non-empty array in ${file}`);
+  }
+
+  if (value.revokedKeyIds !== undefined) {
+    validateStringArray(value.revokedKeyIds, 'assuranceTrust.revokedKeyIds', file);
+  }
+
+  if (value.allowedKeyIds !== undefined) {
+    validateStringArray(value.allowedKeyIds, 'assuranceTrust.allowedKeyIds', file);
   }
 
   value.publicKeys.forEach((entry, index) => {
@@ -363,7 +371,9 @@ function resolveAssuranceTrust(parsedArgs, currentConfig, fail) {
         keyId: entry.keyId,
         path: path.resolve(entry.path)
       }))
-      : []
+      : [],
+    revokedKeyIds: Array.isArray(configValue.revokedKeyIds) ? configValue.revokedKeyIds.slice() : [],
+    allowedKeyIds: Array.isArray(configValue.allowedKeyIds) ? configValue.allowedKeyIds.slice() : []
   };
 }
 

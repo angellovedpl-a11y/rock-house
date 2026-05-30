@@ -28,7 +28,9 @@ const RULES = {
   R6: { title: 'Invalid assurance signature', owasp: ['A08:2021 Software and Data Integrity Failures'], cwe: ['CWE-347'], helpUri: 'https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/' },
   R7: { title: 'Approval environment violates assurance policy', owasp: ['A04:2021 Insecure Design'], cwe: ['CWE-284'], helpUri: 'https://owasp.org/Top10/A04_2021-Insecure_Design/' },
   R8: { title: 'Approval reference violates assurance policy', owasp: ['A04:2021 Insecure Design'], cwe: ['CWE-285'], helpUri: 'https://owasp.org/Top10/A04_2021-Insecure_Design/' },
-  R9: { title: 'Approval validity violates assurance policy', owasp: ['A04:2021 Insecure Design'], cwe: ['CWE-613'], helpUri: 'https://owasp.org/Top10/A04_2021-Insecure_Design/' }
+  R9: { title: 'Approval validity violates assurance policy', owasp: ['A04:2021 Insecure Design'], cwe: ['CWE-613'], helpUri: 'https://owasp.org/Top10/A04_2021-Insecure_Design/' },
+  R10: { title: 'Assurance signed with revoked key', owasp: ['A08:2021 Software and Data Integrity Failures'], cwe: ['CWE-347'], helpUri: 'https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/' },
+  R11: { title: 'Assurance signed with non-allowed key', owasp: ['A08:2021 Software and Data Integrity Failures'], cwe: ['CWE-347'], helpUri: 'https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/' }
 };
 
 function ruleFor(checkId) {

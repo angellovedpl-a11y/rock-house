@@ -188,7 +188,9 @@ For high-risk systems, attach an assurance bundle:
         "keyId": "release-signing-1",
         "path": ".rock-house/assurance-public.pem"
       }
-    ]
+    ],
+    "allowedKeyIds": ["release-signing-1"],
+    "revokedKeyIds": []
   },
   "assurancePolicy": {
     "requiredEnvironment": "production",
@@ -254,6 +256,8 @@ can detect changes made after approval.
 `assurancePolicy` lets the gate enforce which environment the approval covers,
 which change-reference pattern is acceptable, and how long the approval remains
 valid.
+`assuranceTrust.allowedKeyIds` and `assuranceTrust.revokedKeyIds` let you rotate
+or revoke signing keys without changing the assurance format.
 
 Generate or refresh the digest:
 

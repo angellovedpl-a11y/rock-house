@@ -270,6 +270,26 @@ function evaluateAssurance(options) {
     gates
   });
 
+  evaluateBooleanRequirement(signatureKeyNotRevoked(assurance.signature, assuranceTrust), {
+    checkId: 'R10',
+    file: evidenceRef,
+    description: 'Assurance signature uses a revoked key id.',
+    recommendation: 'Re-sign the assurance bundle with a non-revoked trusted key and keep revokedKeyIds updated in assuranceTrust.',
+    passNote: 'Assurance signature key is not revoked.',
+    addFinding,
+    gates
+  });
+
+  evaluateBooleanRequirement(signatureKeyAllowed(assurance.signature, assuranceTrust), {
+    checkId: 'R11',
+    file: evidenceRef,
+    description: 'Assurance signature key id is not in the allowed signing set.',
+    recommendation: 'Rotate to an allowed signing key or update assuranceTrust.allowedKeyIds to match the active release signers.',
+    passNote: 'Assurance signature key is allowed by trust policy.',
+    addFinding,
+    gates
+  });
+
   evaluateAssurancePolicy({
     approval: assurance.approval,
     assurancePolicy,
@@ -403,6 +423,19 @@ function hasValidSignature(assurance, assuranceTrust) {
   } catch {
     return false;
   }
+}
+
+function signatureKeyNotRevoked(signature, assuranceTrust) {
+  if (!signature || typeof signature !== 'object') return false;
+  const revoked = Array.isArray(assuranceTrust?.revokedKeyIds) ? assuranceTrust.revokedKeyIds : [];
+  return !revoked.includes(signature.keyId);
+}
+
+function signatureKeyAllowed(signature, assuranceTrust) {
+  if (!signature || typeof signature !== 'object') return false;
+  const allowed = Array.isArray(assuranceTrust?.allowedKeyIds) ? assuranceTrust.allowedKeyIds : [];
+  if (allowed.length === 0) return true;
+  return allowed.includes(signature.keyId);
 }
 
 function signaturePassNote(signature) {

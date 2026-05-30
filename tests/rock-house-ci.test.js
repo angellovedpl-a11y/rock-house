@@ -36,6 +36,8 @@ async function run() {
   testInvalidStructuredApprovalErrors();
   testTamperedAssuranceDigestBlocks();
   testUnsignedAssuranceBlocks();
+  testRevokedSigningKeyBlocks();
+  testDisallowedSigningKeyBlocks();
   testAssurancePolicyEnvironmentBlocks();
   testAssurancePolicyReferenceBlocks();
   testAssurancePolicyValidityBlocks();
@@ -600,6 +602,36 @@ function testUnsignedAssuranceBlocks() {
   assert(report.findings.some((finding) => finding.checkId === 'R6'), 'missing signature must fail R6');
 }
 
+function testRevokedSigningKeyBlocks() {
+  const fixture = makeTempProject('rock-house-revoked-key-');
+  const assurancePath = writePolicyFixture(fixture, {
+    environment: 'production',
+    reference: 'CR-2026-058',
+    expires: '2026-06-01'
+  });
+  const keys = createSigningKeys(fixture);
+  signAssuranceFile(assurancePath, keys.privateKey, keys.keyId);
+  const report = runPolicyScan(fixture, assurancePath, keys.publicKey, keys.keyId, null, {
+    revokedKeyIds: [keys.keyId]
+  });
+  assert(report.findings.some((finding) => finding.checkId === 'R10'), 'revoked signing key must fail R10');
+}
+
+function testDisallowedSigningKeyBlocks() {
+  const fixture = makeTempProject('rock-house-disallowed-key-');
+  const assurancePath = writePolicyFixture(fixture, {
+    environment: 'production',
+    reference: 'CR-2026-059',
+    expires: '2026-06-01'
+  });
+  const keys = createSigningKeys(fixture);
+  signAssuranceFile(assurancePath, keys.privateKey, keys.keyId);
+  const report = runPolicyScan(fixture, assurancePath, keys.publicKey, keys.keyId, null, {
+    allowedKeyIds: ['release-signing-2']
+  });
+  assert(report.findings.some((finding) => finding.checkId === 'R11'), 'disallowed signing key must fail R11');
+}
+
 function testAssurancePolicyEnvironmentBlocks() {
   const fixture = makeTempProject('rock-house-policy-env-');
   const assurancePath = writePolicyFixture(fixture, {
@@ -875,6 +907,8 @@ function testInvalidConfigErrors() {
   assertInvalidConfig({ assuranceTrust: true }, 'assuranceTrust must be object');
   assertInvalidConfig({ assuranceTrust: { publicKeys: [] } }, 'assuranceTrust publicKeys must be non-empty');
   assertInvalidConfig({ assuranceTrust: { publicKeys: [{ keyId: 'a' }] } }, 'assuranceTrust public key path is required');
+  assertInvalidConfig({ assuranceTrust: { publicKeys: [{ keyId: 'a', path: 'k.pem' }], revokedKeyIds: true } }, 'assuranceTrust revokedKeyIds must be string array');
+  assertInvalidConfig({ assuranceTrust: { publicKeys: [{ keyId: 'a', path: 'k.pem' }], allowedKeyIds: true } }, 'assuranceTrust allowedKeyIds must be string array');
   assertInvalidConfig({ assurancePolicy: true }, 'assurancePolicy must be object');
   assertInvalidConfig({ assurancePolicy: { referencePattern: '[' } }, 'assurancePolicy referencePattern must be valid regex');
   assertInvalidConfig({ assurancePolicy: { maxApprovalAgeDays: 0 } }, 'assurancePolicy maxApprovalAgeDays must be positive');
@@ -1037,10 +1071,10 @@ function writePolicyFixture(root, approvalOverrides = {}) {
   return assurancePath;
 }
 
-function runPolicyScan(root, assurancePath, publicKey, keyId, assurancePolicy) {
+function runPolicyScan(root, assurancePath, publicKey, keyId, assurancePolicy, trustOverrides = {}) {
   const output = path.join(root, 'report.json');
   const configPath = path.join(root, 'rock-house.config.json');
-  writeFile(root, 'rock-house.config.json', JSON.stringify({
+  const config = {
     path: root,
     minLevel: 'bronze',
     output,
@@ -1049,10 +1083,12 @@ function runPolicyScan(root, assurancePath, publicKey, keyId, assurancePolicy) {
     assuranceTrust: {
       publicKeys: [
         { keyId, path: publicKey }
-      ]
-    },
-    assurancePolicy
-  }, null, 2));
+      ],
+      ...trustOverrides
+    }
+  };
+  if (assurancePolicy) config.assurancePolicy = assurancePolicy;
+  writeFile(root, 'rock-house.config.json', JSON.stringify(config, null, 2));
   const result = spawnSync(process.execPath, [scanner, '--config', configPath], {
     cwd: repoRoot,
     encoding: 'utf8'
