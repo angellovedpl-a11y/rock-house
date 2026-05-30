@@ -1,0 +1,67 @@
+name: Rock House Security Gate
+description: Evidence-based security gate for AI-generated web apps.
+author: Angelo Silva
+
+inputs:
+  path:
+    description: Project path to scan.
+    required: false
+    default: .
+  config:
+    description: Optional rock-house.config.json path.
+    required: false
+    default: ''
+  min-level:
+    description: Minimum certification level required: bronze, prata, or ouro.
+    required: false
+    default: prata
+  output:
+    description: JSON report output path.
+    required: false
+    default: rock-house-report.json
+  sarif:
+    description: Optional SARIF report output path for GitHub code scanning.
+    required: false
+    default: ''
+  markdown:
+    description: Optional Markdown summary output path.
+    required: false
+    default: ''
+  baseline:
+    description: Optional previous Rock House JSON report used as baseline.
+    required: false
+    default: ''
+  fail-on-new-only:
+    description: If true, baseline findings remain reported but only new findings fail the gate.
+    required: false
+    default: 'false'
+
+outputs:
+  result:
+    description: passed or blocked.
+  certification:
+    description: Bloqueado, Bronze, Prata, or Ouro.
+  score:
+    description: Numeric score from 0 to 10.
+  confidence:
+    description: Alta, Media, or Baixa.
+  critical:
+    description: Number of critical findings.
+  high:
+    description: Number of high findings.
+  unknown:
+    description: Number of unknown checks.
+  report:
+    description: Path to the JSON report.
+  sarif:
+    description: Path to the SARIF report, when enabled.
+  markdown:
+    description: Path to the Markdown summary, when enabled.
+
+branding:
+  icon: shield
+  color: purple
+
+runs:
+  using: node20
+  main: scripts/rock-house-ci.js
