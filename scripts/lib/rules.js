@@ -23,7 +23,8 @@ const RULES = {
   R1: { title: 'Missing dynamic security testing evidence', owasp: ['A09:2021 Security Logging and Monitoring Failures'], cwe: ['CWE-693'], helpUri: 'https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/' },
   R2: { title: 'Missing runtime monitoring evidence', owasp: ['A09:2021 Security Logging and Monitoring Failures'], cwe: ['CWE-778'], helpUri: 'https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/' },
   R3: { title: 'Missing specialized security review evidence', owasp: ['A04:2021 Insecure Design'], cwe: ['CWE-656'], helpUri: 'https://owasp.org/Top10/A04_2021-Insecure_Design/' },
-  R4: { title: 'Missing human deployment approval evidence', owasp: ['A04:2021 Insecure Design'], cwe: ['CWE-285'], helpUri: 'https://owasp.org/Top10/A04_2021-Insecure_Design/' }
+  R4: { title: 'Missing human deployment approval evidence', owasp: ['A04:2021 Insecure Design'], cwe: ['CWE-285'], helpUri: 'https://owasp.org/Top10/A04_2021-Insecure_Design/' },
+  R5: { title: 'Invalid assurance integrity digest', owasp: ['A08:2021 Software and Data Integrity Failures'], cwe: ['CWE-353'], helpUri: 'https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/' }
 };
 
 function ruleFor(checkId) {

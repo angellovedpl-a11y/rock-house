@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 function loadAssurance(file, fail) {
   if (!file) return null;
@@ -21,7 +22,7 @@ function validateAssurance(value, file, fail) {
     failAssurance(`Assurance file must contain a JSON object: ${file}`, fail);
   }
 
-  const sections = ['dynamicTesting', 'monitoring', 'review', 'approval'];
+  const sections = ['dynamicTesting', 'monitoring', 'review', 'approval', 'integrity'];
   for (const key of Object.keys(value)) {
     if (!sections.includes(key)) {
       failAssurance(`Unknown assurance key "${key}" in ${file}`, fail);
@@ -31,6 +32,7 @@ function validateAssurance(value, file, fail) {
   validateBooleanSection(value.dynamicTesting, ['completed'], 'dynamicTesting', file, fail);
   validateBooleanSection(value.review, ['completed'], 'review', file, fail);
   validateApproval(value.approval, file, fail);
+  validateIntegrity(value.integrity, file, fail);
   validateBooleanSection(value.monitoring, ['errorTracking', 'auditLogs', 'alerts', 'healthChecks'], 'monitoring', file, fail);
 
   validateOptionalString(value.dynamicTesting, 'environment', 'dynamicTesting', file, fail);
@@ -114,6 +116,32 @@ function validateApproval(section, file, fail) {
   }
 }
 
+function validateIntegrity(section, file, fail) {
+  if (section === undefined) return;
+  if (!section || typeof section !== 'object' || Array.isArray(section)) {
+    failAssurance(`Assurance section "integrity" must be an object in ${file}`, fail);
+  }
+
+  const allowed = new Set(['schemaVersion', 'algorithm', 'digest']);
+  for (const key of Object.keys(section)) {
+    if (!allowed.has(key)) {
+      failAssurance(`Unknown integrity field "${key}" in ${file}`, fail);
+    }
+  }
+
+  if (section.schemaVersion !== 1) {
+    failAssurance(`Assurance field "integrity.schemaVersion" must be 1 in ${file}`, fail);
+  }
+
+  if (section.algorithm !== 'sha256') {
+    failAssurance(`Assurance field "integrity.algorithm" must be "sha256" in ${file}`, fail);
+  }
+
+  if (!/^[a-f0-9]{64}$/i.test(String(section.digest || ''))) {
+    failAssurance(`Assurance field "integrity.digest" must be a 64-character sha256 hex string in ${file}`, fail);
+  }
+}
+
 function evaluateAssurance(options) {
   const {
     assurance,
@@ -188,6 +216,16 @@ function evaluateAssurance(options) {
     addFinding,
     gates
   });
+
+  evaluateBooleanRequirement(hasValidIntegrity(assurance), {
+    checkId: 'R5',
+    file: evidenceRef,
+    description: 'High-risk project is missing a valid assurance integrity digest.',
+    recommendation: 'Generate a sha256 integrity digest for the assurance bundle and keep it updated after approved changes.',
+    passNote: 'Assurance integrity digest is valid.',
+    addFinding,
+    gates
+  });
 }
 
 function evaluateBooleanRequirement(value, options) {
@@ -251,7 +289,40 @@ function approvalPassNote(approval) {
   return `Human approval evidence present${details ? ` (${details})` : ''}.`;
 }
 
+function hasValidIntegrity(assurance) {
+  if (!assurance || typeof assurance !== 'object') return false;
+  if (!assurance.integrity || typeof assurance.integrity !== 'object') return false;
+  return computeAssuranceDigest(assurance) === assurance.integrity.digest;
+}
+
+function computeAssuranceDigest(assurance) {
+  const canonical = canonicalize(removeIntegrity(assurance));
+  return crypto.createHash('sha256').update(canonical, 'utf8').digest('hex');
+}
+
+function removeIntegrity(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const clone = {};
+  for (const key of Object.keys(value)) {
+    if (key === 'integrity') continue;
+    clone[key] = value[key];
+  }
+  return clone;
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalize(item)).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const keys = Object.keys(value).sort();
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
 module.exports = {
+  computeAssuranceDigest,
   evaluateAssurance,
   loadAssurance
 };

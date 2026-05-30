@@ -212,6 +212,11 @@ Example assurance file:
     "scope": "payments rollout",
     "reference": "CR-2026-051",
     "expires": "2026-06-30"
+  },
+  "integrity": {
+    "schemaVersion": 1,
+    "algorithm": "sha256",
+    "digest": "generated-by-rock-house-assurance"
   }
 }
 ```
@@ -221,6 +226,14 @@ runtime monitoring, specialized review, or human approval evidence is missing.
 The approval evidence is now structured and versioned so the gate can audit who
 approved the deploy, for which environment/scope, under which change reference,
 and until when that approval remains valid.
+High-risk assurance bundles also require a valid integrity digest so Rock House
+can detect changes made after approval.
+
+Generate or refresh the digest:
+
+```bash
+node scripts/rock-house-assurance.js --file rock-house.assurance.json --write
+```
 
 When `dast.url` or the Action input `dast-url` is configured, Rock House performs
 live HTTP checks against localhost or staging and can report runtime findings such
@@ -358,6 +371,7 @@ rock-house/
 │   ├── defense-in-depth.md # Theory + examples
 │   └── operational.md     # WAF, MFA, logs guide
 ├── scripts/
+│   ├── rock-house-assurance.js # Assurance digest helper
 │   ├── rock-house-ci.js  # Dependency-free JSON security gate for CI
 │   ├── lib/
 │   │   ├── assurance.js  # High-risk assurance evidence validation

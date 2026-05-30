@@ -9,6 +9,7 @@ const { spawn, spawnSync } = require('child_process');
 
 const repoRoot = path.resolve(__dirname, '..');
 const scanner = path.join(repoRoot, 'scripts', 'rock-house-ci.js');
+const assuranceTool = path.join(repoRoot, 'scripts', 'rock-house-assurance.js');
 
 run().catch((error) => {
   console.error(error);
@@ -32,6 +33,7 @@ async function run() {
   await testHighRiskAssuranceUsesDastEvidence();
   testExpiredStructuredApprovalBlocks();
   testInvalidStructuredApprovalErrors();
+  testTamperedAssuranceDigestBlocks();
   testMissingPathErrors();
   testMissingConfigErrors();
   testInvalidConfigErrors();
@@ -336,6 +338,7 @@ async function testHighRiskAssuranceUsesDastEvidence() {
       reference: 'CR-2026-051'
     }
   }, null, 2));
+  signAssuranceFile(path.join(fixture, 'assurance.json'));
   writeFile(fixture, 'observability.json', JSON.stringify({
     auditLogs: true,
     alerts: true
@@ -403,6 +406,7 @@ function testExpiredStructuredApprovalBlocks() {
       expires: '2026-05-29'
     }
   }, null, 2));
+  signAssuranceFile(path.join(fixture, 'assurance.json'));
 
   const output = path.join(fixture, 'report.json');
   const configPath = path.join(fixture, 'rock-house.config.json');
@@ -464,6 +468,58 @@ function testInvalidStructuredApprovalErrors() {
   });
 
   assert.strictEqual(result.status, 2, 'invalid structured approval should fail fast');
+}
+
+function testTamperedAssuranceDigestBlocks() {
+  const fixture = makeTempProject('rock-house-tampered-assurance-');
+  writeFile(fixture, 'package.json', JSON.stringify({
+    name: 'tampered-assurance-fixture',
+    private: true
+  }, null, 2));
+  writeFile(fixture, 'package-lock.json', JSON.stringify({
+    name: 'tampered-assurance-fixture',
+    lockfileVersion: 3,
+    packages: {}
+  }, null, 2));
+  const assurancePath = path.join(fixture, 'assurance.json');
+  writeFile(fixture, 'assurance.json', JSON.stringify({
+    dynamicTesting: { completed: true, environment: 'staging', date: '2026-05-30' },
+    monitoring: { errorTracking: true, auditLogs: true, alerts: true, healthChecks: true },
+    review: { completed: true, reviewer: 'security-team', date: '2026-05-30' },
+    approval: {
+      schemaVersion: 1,
+      status: 'approved',
+      approver: 'release-manager',
+      date: '2026-05-30',
+      environment: 'production',
+      scope: 'payments rollout',
+      reference: 'CR-2026-053'
+    }
+  }, null, 2));
+  signAssuranceFile(assurancePath);
+
+  const assurance = readJson(assurancePath);
+  assurance.approval.scope = 'tampered scope';
+  fs.writeFileSync(assurancePath, `${JSON.stringify(assurance, null, 2)}\n`, 'utf8');
+
+  const output = path.join(fixture, 'report.json');
+  const configPath = path.join(fixture, 'rock-house.config.json');
+  writeFile(fixture, 'rock-house.config.json', JSON.stringify({
+    path: fixture,
+    minLevel: 'bronze',
+    output,
+    riskProfile: 'high',
+    assurance: assurancePath
+  }, null, 2));
+
+  const result = spawnSync(process.execPath, [scanner, '--config', configPath], {
+    cwd: repoRoot,
+    encoding: 'utf8'
+  });
+
+  assert.notStrictEqual(result.status, 0, 'tampered assurance digest should fail high-risk certification');
+  const report = readJson(output);
+  assert(report.findings.some((finding) => finding.checkId === 'R5'), 'tampered assurance digest must fail R5');
 }
 
 function testSuppressionsAreAudited() {
@@ -791,6 +847,14 @@ function writeFile(root, relativePath, content) {
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+function signAssuranceFile(file) {
+  const result = spawnSync(process.execPath, [assuranceTool, '--file', file, '--write'], {
+    cwd: repoRoot,
+    encoding: 'utf8'
+  });
+  assert.strictEqual(result.status, 0, result.stdout + result.stderr);
 }
 
 function startServer(handler) {
