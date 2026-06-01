@@ -23,6 +23,7 @@ async function run() {
   testNoRecognizedStackLowersConfidence();
   testMonorepoBlindSpotDetected();
   testSecretDetection();
+  testPythonFlaskRules();
   testVulnerableDemoBlocks();
   testCleanFixturePasses();
   testConfigControlsScan();
@@ -122,6 +123,36 @@ function testSecretDetection() {
   assert.strictEqual(report.findings.some((f) => f.file === '.env.example'), false, 'allowlisted example file must not flag');
   const aws = report.findings.find((f) => f.checkId === 'SEC-AWS');
   assert(aws.fixPack && aws.fixPack.before && aws.fixPack.after, 'secret finding carries a fix pack');
+}
+
+function testPythonFlaskRules() {
+  const fixture = makeTempProject('rock-house-python-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  writeFile(fixture, 'app.py', [
+    'import subprocess, pickle, yaml',
+    'app.run(debug=True)',
+    'subprocess.call(cmd, shell=True)',
+    'data = pickle.loads(payload)',
+    'cfg = yaml.load(stream)',
+    'query = f"SELECT * FROM users WHERE id = {user_id}"'
+  ].join('\n'));
+  // Clean Python file must not be flagged.
+  writeFile(fixture, 'safe.py', [
+    'import subprocess, yaml',
+    'subprocess.run(["ls", "-la"])',
+    'cfg = yaml.safe_load(stream)'
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-python-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.notStrictEqual(result.status, 0, 'insecure python must block');
+  const report = readJson(output);
+  const ids = report.findings.filter((f) => f.file === 'app.py').map((f) => f.checkId);
+  for (const id of ['PY-DEBUG', 'PY-SHELL', 'PY-PICKLE', 'PY-YAML', 'PY-SQL']) {
+    assert(ids.includes(id), `expected ${id} in app.py findings`);
+  }
+  assert.strictEqual(report.findings.some((f) => f.file === 'safe.py'), false, 'safe python must not flag');
 }
 
 function testBaselineFailOnNewOnly() {
