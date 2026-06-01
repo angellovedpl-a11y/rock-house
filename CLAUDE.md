@@ -26,7 +26,7 @@ Skill global do Claude Code que aplica defesa em profundidade em todo projeto de
 | **Skill format** | Claude Code Skill (Markdown + YAML frontmatter) | Native format, no dependencies, progressive disclosure built-in |
 | **Entry point** | `SKILL.md` (~150 lines) | Routes to modes, detects context, economizes tokens |
 | **Sub-modules** | `.md` files in subdirectories | Loaded on-demand via skill's internal references |
-| **Secret scanning** | `gitleaks` patterns (regex in script) | Best regex patterns, MIT license, no binary dependency |
+| **Secret scanning** | Built-in provider patterns + entropy in the scanner; `gitleaks` optional for git history | In-engine detection needs zero install; gitleaks adds deep history scanning |
 | **Dependency audit** | `npm audit` / `pip audit` (native) | Zero install — comes with the package managers |
 | **Header checking** | `curl -I` + regex parsing | Universal, no dependencies |
 | **Script runtime** | PowerShell (.ps1) + Bash (.sh) | Windows + Linux/Mac coverage |

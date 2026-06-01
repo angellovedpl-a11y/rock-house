@@ -7,7 +7,9 @@
   "exclude": [
     "docs",
     "examples",
-    "coverage"
+    "coverage",
+    "scripts/lib/rules",
+    "tests"
   ],
   "allowCriticalSuppressions": false,
   "suppressions": [
