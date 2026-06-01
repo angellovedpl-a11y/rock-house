@@ -22,6 +22,7 @@ async function run() {
   testUnsupportedStackLowersConfidence();
   testNoRecognizedStackLowersConfidence();
   testMonorepoBlindSpotDetected();
+  testSecretDetection();
   testVulnerableDemoBlocks();
   testCleanFixturePasses();
   testConfigControlsScan();
@@ -99,6 +100,28 @@ function testMonorepoBlindSpotDetected() {
   assert(report.coverage.gaps.includes('rust'), 'rust blind spot found in services/api/');
   assert.strictEqual(report.confidence, 'Baixa', 'a nested blind spot forces Baixa');
   assert.notStrictEqual(result.status, 0, 'monorepo blind spot blocks');
+}
+
+function testSecretDetection() {
+  const fixture = makeTempProject('rock-house-secrets-');
+  // Real-looking hardcoded secrets in source.
+  writeFile(fixture, 'config.py', [
+    'AWS_KEY = "AKIAIOSFODNN7EXAMPLE"',
+    'STRIPE = "STRIPE_TEST_FIXTURE_REDACTED"'
+  ].join('\n'));
+  // Allowlisted: example file with placeholder must NOT flag.
+  writeFile(fixture, '.env.example', 'AWS_KEY=your-key-here\nSTRIPE=sk_live_xxxxxxxxxxxx\n');
+
+  const output = path.join(os.tmpdir(), `rock-house-secrets-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.notStrictEqual(result.status, 0, 'hardcoded secrets must block');
+  const report = readJson(output);
+  assert(report.findings.some((f) => f.checkId === 'SEC-AWS' && f.file === 'config.py'), 'AWS key detected');
+  assert(report.findings.some((f) => f.checkId === 'SEC-STRIPE' && f.file === 'config.py'), 'Stripe key detected');
+  assert.strictEqual(report.findings.some((f) => f.file === '.env.example'), false, 'allowlisted example file must not flag');
+  const aws = report.findings.find((f) => f.checkId === 'SEC-AWS');
+  assert(aws.fixPack && aws.fixPack.before && aws.fixPack.after, 'secret finding carries a fix pack');
 }
 
 function testBaselineFailOnNewOnly() {
