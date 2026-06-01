@@ -24,6 +24,7 @@ async function run() {
   testMonorepoBlindSpotDetected();
   testSecretDetection();
   testPythonFlaskRules();
+  testGenericGapRules();
   testVulnerableDemoBlocks();
   testCleanFixturePasses();
   testConfigControlsScan();
@@ -153,6 +154,28 @@ function testPythonFlaskRules() {
     assert(ids.includes(id), `expected ${id} in app.py findings`);
   }
   assert.strictEqual(report.findings.some((f) => f.file === 'safe.py'), false, 'safe python must not flag');
+}
+
+function testGenericGapRules() {
+  const fixture = makeTempProject('rock-house-generic-');
+  writeFile(fixture, 'server.js', [
+    'const cp = require("child_process");',
+    'cp.exec("ping " + req.query.host);',
+    'const h = crypto.createHash("md5");',
+    'const token = Math.random().toString(36);',
+    'fetch(req.query.url);',
+    'res.redirect(req.query.next);'
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-generic-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.notStrictEqual(result.status, 0, 'generic vulns must block');
+  const report = readJson(output);
+  const ids = report.findings.map((f) => f.checkId);
+  for (const id of ['I5', 'C1', 'C2', 'I7', 'H7']) {
+    assert(ids.includes(id), `expected ${id} in findings`);
+  }
 }
 
 function testBaselineFailOnNewOnly() {
