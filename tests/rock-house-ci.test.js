@@ -18,6 +18,7 @@ run().catch((error) => {
 });
 
 async function run() {
+  testEngineMatching();
   testVulnerableDemoBlocks();
   testCleanFixturePasses();
   testConfigControlsScan();
@@ -1145,6 +1146,51 @@ function runPolicyScan(root, assurancePath, publicKey, keyId, assurancePolicy, t
   });
   assert.notStrictEqual(result.status, 0, result.stdout + result.stderr);
   return readJson(output);
+}
+
+function testEngineMatching() {
+  const { languageFor, runRules } = require('../scripts/lib/rules/engine');
+  assert.strictEqual(languageFor('.tsx'), 'js');
+  assert.strictEqual(languageFor('.py'), 'py');
+  assert.strictEqual(languageFor('.go'), 'other');
+
+  const findings = [];
+  const gates = [];
+  const addFinding = (severity, id, vector, file, line, desc, fix, fixPack) =>
+    findings.push({ severity, id, vector, file, line, desc, fix, fixPack });
+
+  const rules = [
+    { id: 'T1', severity: 'Alto', vector: 'Test', languages: ['py'],
+      pattern: /danger\(/, message: 'danger', recommendation: 'stop', fixPack: { why: 'x' } },
+    { id: 'T2', severity: 'Critico', vector: 'Test', languages: ['js'],
+      pattern: /never/, message: 'never', recommendation: 'no' },
+    { id: 'T3', severity: 'Medio', vector: 'Test', languages: ['*'],
+      pattern: /flagged/, flow: { window: 3, negate: /safe/ }, message: 'flow', recommendation: 'fix' }
+  ];
+
+  // py file: T1 fires, T2 (js only) does not
+  runRules({ rules, language: 'py', rel: 'a.py', lines: ['ok', 'danger()', 'never'], addFinding, gates });
+  assert.strictEqual(findings.filter((f) => f.id === 'T1').length, 1);
+  assert.strictEqual(findings.filter((f) => f.id === 'T2').length, 0);
+  assert.strictEqual(findings.find((f) => f.id === 'T1').line, 2, 'line is 1-based');
+  assert.deepStrictEqual(findings.find((f) => f.id === 'T1').fixPack, { why: 'x' });
+
+  // flow negate: "flagged" near "safe" is suppressed
+  findings.length = 0;
+  runRules({ rules, language: 'js', rel: 'b.js', lines: ['flagged', 'safe'], addFinding, gates });
+  assert.strictEqual(findings.filter((f) => f.id === 'T3').length, 0, 'negate suppresses');
+  findings.length = 0;
+  runRules({ rules, language: 'js', rel: 'c.js', lines: ['flagged', 'plain'], addFinding, gates });
+  assert.strictEqual(findings.filter((f) => f.id === 'T3').length, 1, 'no negate -> fires');
+
+  // gate rule pushes to gates, not findings
+  findings.length = 0;
+  gates.length = 0;
+  const gateRule = [{ id: 'T4', languages: ['*'], pattern: /warn/, gate: { id: 'H4', status: 'WARN', note: 'n' } }];
+  runRules({ rules: gateRule, language: 'js', rel: 'd.js', lines: ['warn'], addFinding, gates });
+  assert.strictEqual(findings.length, 0);
+  assert.strictEqual(gates.length, 1);
+  assert.strictEqual(gates[0].status, 'WARN');
 }
 
 function startServer(handler) {
