@@ -44,6 +44,10 @@ function toMarkdown(report) {
     '',
     report.findings.length > topFindings.length ? `_Mostrando 10 de ${report.findings.length} findings._` : '',
     '',
+    '## Pacotes de Correcao',
+    '',
+    fixPacksSection(topFindings),
+    '',
     '## Supressoes',
     '',
     report.suppressed.length ? suppressedTable(report.suppressed.slice(0, 10)) : 'Nenhuma supressao aplicada.',
@@ -132,7 +136,10 @@ function toSarif(report) {
             owasp: finding.rule?.owasp || [],
             cwe: finding.rule?.cwe || [],
             impact: finding.impact,
-            recommendation: finding.recommendation
+            recommendation: finding.recommendation,
+            fixBefore: finding.fixPack?.before || '',
+            fixAfter: finding.fixPack?.after || '',
+            fixCommand: finding.fixPack?.command || ''
           }
         }))
       }
@@ -160,6 +167,24 @@ function findingsTable(items) {
     rows.push(`| ${escapeMd(finding.severity)} | ${escapeMd(finding.checkId)} | ${escapeMd(ruleLabel(finding))} | \`${escapeMd(`${finding.file}:${finding.line}`)}\` | ${escapeMd(finding.description)} | ${escapeMd(finding.recommendation)} |`);
   }
   return rows.join('\n');
+}
+
+function fixPacksSection(items) {
+  const blocks = [];
+  for (const f of items) {
+    if (!f.fixPack) continue;
+    const fp = f.fixPack;
+    const lines = [
+      `### [${f.severity}] ${f.checkId} — ${escapeMd(f.rule?.title || f.description)}  (\`${f.file}:${f.line}\`)`,
+      fp.why ? `**Por que:** ${escapeMd(fp.why)}` : '',
+      fp.before ? `**Antes:** \`${escapeMd(fp.before)}\`` : '',
+      fp.after ? `**Depois:** \`${escapeMd(fp.after)}\`` : '',
+      fp.command ? `**Comando:** \`${escapeMd(fp.command)}\`` : '',
+      Array.isArray(fp.refs) && fp.refs.length ? `**Ref:** ${escapeMd(fp.refs.join(' / '))}` : ''
+    ].filter((l) => l !== '');
+    blocks.push(lines.join('\n'));
+  }
+  return blocks.length ? blocks.join('\n\n') : 'Nenhum pacote de correcao disponivel.';
 }
 
 function unknownTable(items) {

@@ -25,6 +25,7 @@ async function run() {
   testSecretDetection();
   testPythonFlaskRules();
   testGenericGapRules();
+  testFixPackRendering();
   testVulnerableDemoBlocks();
   testCleanFixturePasses();
   testConfigControlsScan();
@@ -176,6 +177,29 @@ function testGenericGapRules() {
   for (const id of ['I5', 'C1', 'C2', 'I7', 'H7']) {
     assert(ids.includes(id), `expected ${id} in findings`);
   }
+}
+
+function testFixPackRendering() {
+  const fixture = makeTempProject('rock-house-fixpack-');
+  writeFile(fixture, 'config.py', 'AWS_KEY = "AKIAIOSFODNN7EXAMPLE"\n');
+
+  const output = path.join(fixture, 'report.json');
+  const sarifOutput = path.join(fixture, 'report.sarif');
+  const markdownOutput = path.join(fixture, 'summary.md');
+  const result = runScanner(fixture, output, 'bronze', { sarifOutput, markdownOutput });
+
+  assert.notStrictEqual(result.status, 0);
+  const report = readJson(output);
+  const aws = report.findings.find((f) => f.checkId === 'SEC-AWS');
+  assert(aws.fixPack && aws.fixPack.after, 'JSON finding carries fixPack');
+
+  const md = fs.readFileSync(markdownOutput, 'utf8');
+  assert(md.includes('## Pacotes de Correcao'), 'Markdown has fix-pack section');
+  assert(md.includes('AWS_KEY = os.environ'), 'Markdown shows the after snippet');
+
+  const sarif = readJson(sarifOutput);
+  const awsResult = sarif.runs[0].results.find((r) => r.ruleId === 'SEC-AWS');
+  assert(awsResult.properties.fixAfter, 'SARIF result carries fixAfter property');
 }
 
 function testBaselineFailOnNewOnly() {

@@ -52,15 +52,13 @@ const META = {
   'C2': { title: 'Insecure randomness for secret', owasp: ['A02:2021 Cryptographic Failures'], cwe: ['CWE-338'], helpUri: 'https://owasp.org/Top10/A02_2021-Cryptographic_Failures/' }
 };
 
-// Families are added in later tasks. Each exports an array of detection rules.
-const families = [];
-try { families.push(require('./injection')); } catch (e) { /* added in Task 3/7 */ }
-try { families.push(require('./secrets')); } catch (e) { /* added in Task 5 */ }
-try { families.push(require('./python-flask')); } catch (e) { /* added in Task 6 */ }
-try { families.push(require('./headers-cors')); } catch (e) { /* added in Task 3 */ }
-try { families.push(require('./auth-access')); } catch (e) { /* added in Task 3 */ }
-
-const DETECTION_RULES = families.flat();
+const DETECTION_RULES = [
+  ...require('./auth-access'),
+  ...require('./injection'),
+  ...require('./headers-cors'),
+  ...require('./secrets'),
+  ...require('./python-flask')
+];
 
 function ruleFor(checkId) {
   return META[checkId] || { title: checkId, owasp: [], cwe: [], helpUri: 'https://owasp.org/www-project-top-ten/' };
