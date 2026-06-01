@@ -684,6 +684,17 @@ const SKIP_DIRS = new Set([
   'vendor', 'venv', '.venv', '__pycache__', '.turbo', '.cache'
 ]);
 
+// Source extensions Rock House actually has rule families for. Finding any of these
+// means we genuinely audited that language — even without a framework manifest. This
+// keeps a manifest-less project (e.g. a lone app/page.tsx) from being treated as
+// "unaudited" when the engine in fact ran js rules over it.
+const AUDITED_SOURCE = {
+  '.js': 'javascript', '.jsx': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript',
+  '.ts': 'javascript', '.tsx': 'javascript',
+  '.py': 'python',
+  '.html': 'static'
+};
+
 // Codex correction #2: detection is repo-wide (monorepo-aware), not root-only.
 // One bounded walk collects both supported signals and blind-spot gaps anywhere in
 // the tree (e.g. services/api/Cargo.toml, apps/web/package.json).
@@ -721,7 +732,8 @@ function detectStacks(root, maxDepth = 6) {
       if (name === 'requirements.txt' || name === 'pyproject.toml' || name === 'Pipfile') {
         try { pyManifests.push(fs.readFileSync(full, 'utf8')); } catch (e) { /* ignore */ }
       }
-      if (name === 'index.html') supported.add('static');
+      const sourceLang = AUDITED_SOURCE[path.extname(name)];
+      if (sourceLang) supported.add(sourceLang);
     }
   })(root, 0);
 

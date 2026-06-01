@@ -18,6 +18,7 @@ const { toMarkdown, toSarif } = require('./lib/report-formatters');
 const { impactFor, ruleFor } = require('./lib/rules');
 const { languageFor, runRules } = require('./lib/rules/engine');
 const { DETECTION_RULES } = require('./lib/rules/index');
+const { evaluateCoverage } = require('./lib/rules/coverage');
 const { scanPnpmWorkspace } = require('./lib/supply-chain-detection');
 
 const args = parseArgs(process.argv.slice(2));
@@ -131,7 +132,8 @@ async function main() {
   const gateFindings = failOnNewOnly ? newFindings : findings;
   const summary = summarize(gateFindings, unknown);
   const score = calculateScore(summary);
-  const confidence = calculateConfidence(summary);
+  const coverage = evaluateCoverage(targetRoot);
+  const confidence = calculateConfidence(summary, coverage);
   const certification = decideCertification(summary, score, confidence);
   const result = certification === 'Bloqueado' ? 'blocked' : 'passed';
 
@@ -151,6 +153,7 @@ async function main() {
     certification,
     score,
     confidence,
+    coverage,
     summary,
     findings,
     suppressed,
@@ -388,7 +391,10 @@ function calculateScore(summary) {
   return Math.max(0, Number(score.toFixed(1)));
 }
 
-function calculateConfidence(summary) {
+function calculateConfidence(summary, coverage) {
+  // Codex correction #1: a blind spot OR nothing-recognized both force low confidence.
+  if (coverage && coverage.gaps && coverage.gaps.length > 0) return 'Baixa';
+  if (coverage && (!coverage.supported || coverage.supported.length === 0)) return 'Baixa';
   if (summary.unknown > 4) return 'Baixa';
   if (summary.unknown > 1) return 'Media';
   return 'Alta';

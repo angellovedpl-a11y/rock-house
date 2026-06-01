@@ -152,10 +152,13 @@ at all — can no longer earn a passing grade by silence. The report gains a
 **"Cobertura"** section (JSON + Markdown) listing, per detected stack: `audited` /
 `not audited` and which rule families ran.
 
-> **Calibration note:** purely static sites (HTML/CSS, no framework manifest) would
-> otherwise read as "no recognized stack" → `Baixa`. A root/sub `index.html` counts as
-> a minimal `static` supported signal (the engine does run `*`/`html` rules on it), so
-> Angelo's static freelance sites aren't false-blocked while genuinely opaque repos are.
+> **Calibration note:** "recognized stack" is keyed on what we **actually audited**, not
+> just on manifests. Any source file of a language with a rule family — `.js/.jsx/.ts/.tsx`
+> (→ `javascript`), `.py` (→ `python`), `.html` (→ `static`) — counts as a supported
+> signal, because the engine really did run rules over it. So a manifest-less project
+> (a lone `app/page.tsx`, or a static HTML site) is **not** false-blocked, while a repo
+> with only opaque content (e.g. just `.txt`/docs, or a Go/Rust tree we can't inspect)
+> correctly drops to `Baixa`.
 
 ### Test-safety of this change
 

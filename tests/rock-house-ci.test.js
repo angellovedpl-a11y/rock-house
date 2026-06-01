@@ -19,6 +19,9 @@ run().catch((error) => {
 
 async function run() {
   testEngineMatching();
+  testUnsupportedStackLowersConfidence();
+  testNoRecognizedStackLowersConfidence();
+  testMonorepoBlindSpotDetected();
   testVulnerableDemoBlocks();
   testCleanFixturePasses();
   testConfigControlsScan();
@@ -47,6 +50,55 @@ async function run() {
   testMissingConfigErrors();
   testInvalidConfigErrors();
   console.log('rock-house-ci tests passed');
+}
+
+function testUnsupportedStackLowersConfidence() {
+  const fixture = makeTempProject('rock-house-coverage-gap-');
+  // A Go project: recognized stack, but Rock House has no Go rule family.
+  writeFile(fixture, 'go.mod', 'module example.com/app\n\ngo 1.22\n');
+  writeFile(fixture, 'main.go', 'package main\nfunc main() {}\n');
+
+  const output = path.join(os.tmpdir(), `rock-house-coverage-gap-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.notStrictEqual(result.status, 0, 'unsupported stack must not earn a passing gate');
+  const report = readJson(output);
+  assert.strictEqual(report.confidence, 'Baixa', 'coverage gap forces Baixa confidence');
+  assert.strictEqual(report.certification, 'Bloqueado', 'Baixa confidence blocks');
+  assert(Array.isArray(report.coverage.gaps), 'report exposes coverage.gaps');
+  assert(report.coverage.gaps.includes('go'), 'go is reported as a blind spot');
+}
+
+function testNoRecognizedStackLowersConfidence() {
+  // Codex correction #1: a repo with no recognized stack AND no blind-spot manifest
+  // was never really audited -- it must not pass with high confidence.
+  const fixture = makeTempProject('rock-house-no-stack-');
+  writeFile(fixture, 'NOTES.txt', 'just notes -- nothing the scanner recognizes');
+
+  const output = path.join(os.tmpdir(), `rock-house-no-stack-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  const report = readJson(output);
+  assert.strictEqual(report.confidence, 'Baixa', 'no recognized stack forces Baixa');
+  assert.strictEqual(report.coverage.audited, false, 'nothing recognized is not "audited"');
+  assert.strictEqual(report.coverage.gaps.length, 0, 'no blind-spot manifest, yet still blocked');
+  assert.notStrictEqual(result.status, 0, 'an unaudited repo must not earn a passing gate');
+}
+
+function testMonorepoBlindSpotDetected() {
+  // Codex correction #2: blind spots in subdirectories (monorepo) must be found,
+  // not only at the repo root.
+  const fixture = makeTempProject('rock-house-monorepo-');
+  writeFile(fixture, 'package.json', JSON.stringify({ dependencies: { next: '14.0.0', react: '18.0.0' } }));
+  writeFile(fixture, 'services/api/Cargo.toml', '[package]\nname = "api"');
+
+  const output = path.join(os.tmpdir(), `rock-house-monorepo-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  const report = readJson(output);
+  assert(report.coverage.gaps.includes('rust'), 'rust blind spot found in services/api/');
+  assert.strictEqual(report.confidence, 'Baixa', 'a nested blind spot forces Baixa');
+  assert.notStrictEqual(result.status, 0, 'monorepo blind spot blocks');
 }
 
 function testBaselineFailOnNewOnly() {

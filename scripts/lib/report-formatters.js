@@ -29,6 +29,15 @@ function toMarkdown(report) {
     '|---------|------|-------|-------|---------|',
     `| ${report.summary.critical} | ${report.summary.high} | ${report.summary.medium} | ${report.summary.low} | ${report.summary.unknown} |`,
     '',
+    '## Cobertura',
+    '',
+    report.coverage
+      ? `${report.coverage.audited ? '✅' : '⚠️'} ${report.coverage.note}`
+      : 'Cobertura não avaliada.',
+    report.coverage && report.coverage.gaps && report.coverage.gaps.length
+      ? `**Pontos cegos:** ${report.coverage.gaps.join(', ')}`
+      : '',
+    '',
     '## Bloqueios / Findings',
     '',
     topFindings.length ? findingsTable(topFindings) : 'Nenhum finding reportado.',
