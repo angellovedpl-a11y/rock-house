@@ -2,6 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Plan-review correction pass — 2026-06-01.** Codex reviewed this plan and flagged 4 corrections, now folded in before resuming from Task 2:
+> 1. **Coverage** must not call a repo "audited" when `supported` is empty → Task 4 (`evaluateCoverage`, `calculateConfidence`).
+> 2. **Blind-spot detection** must be repo-wide (monorepo), not root-only → Task 4 (`detectStacks` recursive walk).
+> 3. **Fingerprint** needs a stronger discriminator (`line`) so duplicate-`checkId` rules don't collapse → Task 3 (Step 5b).
+> 4. **`/g` regex hardening** must live in engine code, not just a written convention → Task 1 (already implemented in commit `e87d49b`; plan code below now matches).
+
 **Goal:** Replace the inline-regex detection core of the Rock House CI scanner with a declarative rule registry, add coverage-aware confidence, in-engine secret detection, Python/Flask rules, and rich fix packs — without breaking the 28 passing tests or the dependency-free constraint.
 
 **Architecture:** Detection rules become declarative objects in `scripts/lib/rules/`, run by a generic engine. A coverage map downgrades confidence to `Baixa` when a project's stack has no matching rule family (killing the "approve what we didn't audit" failure mode). Findings gain a `fixPack` (before → after + command) rendered in JSON/Markdown/SARIF.
@@ -111,6 +117,14 @@ const LANGUAGE_BY_EXT = {
   '.json': 'json', '.yaml': 'yaml', '.yml': 'yaml', '.toml': 'toml'
 };
 
+// Codex correction #4: hardening lives in code, not in a rule-authoring convention.
+// `.test()` is stateful when a regex has the /g or /y flag — reset lastIndex so a
+// stray flag in any rule can never cause an intermittent false negative.
+function test(regex, str) {
+  if (regex.global) regex.lastIndex = 0;
+  return regex.test(str);
+}
+
 function languageFor(ext) {
   return LANGUAGE_BY_EXT[ext] || 'other';
 }
@@ -119,7 +133,7 @@ function ruleAppliesToFile(rule, language, rel) {
   const langs = rule.languages || ['*'];
   if (!langs.includes('*') && !langs.includes(language)) return false;
   if (rule.pathTest && !rule.pathTest(rel)) return false;
-  if (rule.allowlist && rule.allowlist.some((re) => re.test(rel))) return false;
+  if (rule.allowlist && rule.allowlist.some((re) => test(re, rel))) return false;
   return true;
 }
 
@@ -129,8 +143,8 @@ function flowConfirms(rule, lines, index) {
   const text = flow.context
     ? lines.slice(Math.max(0, index - flow.context), Math.min(lines.length, index + flow.context + 1)).join('\n')
     : lines.slice(index, Math.min(lines.length, index + (flow.window || 25))).join('\n');
-  if (flow.negate && flow.negate.test(text)) return false;
-  if (flow.confirm && !flow.confirm.test(text)) return false;
+  if (flow.negate && test(flow.negate, text)) return false;
+  if (flow.confirm && !test(flow.confirm, text)) return false;
   return true;
 }
 
@@ -138,12 +152,12 @@ function runRules({ rules, language, rel, lines, addFinding, gates }) {
   for (const rule of rules) {
     if (!ruleAppliesToFile(rule, language, rel)) continue;
     lines.forEach((line, index) => {
-      if (rule.lineAllowlist && rule.lineAllowlist.some((re) => re.test(line))) return;
+      if (rule.lineAllowlist && rule.lineAllowlist.some((re) => test(re, line))) return;
       const hit = rule.customMatch
         ? rule.customMatch(lines, index, rel)
-        : rule.pattern.test(line);
+        : test(rule.pattern, line);
       if (!hit) return;
-      if (!rule.customMatch && !flowConfirms(rule, lines, index)) return;
+      if (!flowConfirms(rule, lines, index)) return;
       if (rule.gate) {
         gates.push({
           id: rule.gate.id,
@@ -161,7 +175,12 @@ function runRules({ rules, language, rel, lines, addFinding, gates }) {
 module.exports = { languageFor, runRules };
 ```
 
-> Note: rule `pattern` regexes MUST NOT use the global (`/g`) flag — `.test()` is stateful with `/g` and would skip alternate matches.
+> **Hardening (in code, not convention) — Codex correction #4:** every regex test goes
+> through the `test(regex, str)` helper, which resets `lastIndex` when a regex has the
+> `/g`/`/y` flag. A stray global flag in any rule can therefore never cause an
+> intermittent false negative. `flow` is also honored for `customMatch` rules (the old
+> `!rule.customMatch &&` guard is gone). This matches the engine already committed in
+> `e87d49b`; the block above is the source of truth if the engine is ever rebuilt.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -525,6 +544,34 @@ function addFinding(severity, checkId, vector, file, line, description, fix, fix
 
 > `scanPnpmWorkspace` and `scanPackageJson`/`scanLockfile` call `addFinding` with 7 args; `fixPack` is simply `undefined` → stored as `null`. No change needed there.
 
+- [ ] **Step 5b: Strengthen the dedup fingerprint with `line` (Codex correction #3)**
+
+`fingerprintFor` currently keys on `checkId + file + description`. This task and Task 6
+add families that **reuse a `checkId`** across multiple rules and lines (`H4` ×4,
+`PY-SQL` ×2). Two genuinely distinct occurrences that share the same `checkId` and
+description can collapse into one fingerprint — silently hiding a finding from the
+report and from baseline/suppression accounting. Add `line` as a discriminator.
+
+In `scripts/rock-house-ci.js`, replace `fingerprintFor`:
+
+```js
+function fingerprintFor(finding) {
+  if (!finding || !finding.checkId || !finding.file || !finding.description) return '';
+  return [
+    finding.checkId,
+    normalizePath(finding.file),
+    String(finding.line || ''),
+    String(finding.description).trim().toLowerCase()
+  ].join('|');
+}
+```
+
+> **Migration impact:** adding `line` changes every fingerprint, so any **existing
+> baseline file is invalidated once** (all findings read as "new" until regenerated).
+> This is a documented one-time reset — note it in the release/changelog and regenerate
+> baselines. `testBaselineFailOnNewOnly` stays green: it generates and reads the baseline
+> with the same `fingerprintFor`, and a finding's line is stable run-to-run.
+
 - [ ] **Step 6: Remove the now-dead `js-detection` direct require from the scanner (optional cleanup)**
 
 In `scripts/rock-house-ci.js`, delete the line `const { shouldFlagInnerHtml } = require('./lib/js-detection');` — it is now used only inside the injection family. Leave `scripts/lib/js-detection.js` itself untouched.
@@ -552,7 +599,7 @@ git commit -m "refactor(scanner): port inline checks to rule families, run via e
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `tests/rock-house-ci.test.js` and register `testUnsupportedStackLowersConfidence();` in `run()`:
+Add to `tests/rock-house-ci.test.js` and register `testUnsupportedStackLowersConfidence();`, `testNoRecognizedStackLowersConfidence();`, and `testMonorepoBlindSpotDetected();` in `run()`:
 
 ```js
 function testUnsupportedStackLowersConfidence() {
@@ -571,9 +618,41 @@ function testUnsupportedStackLowersConfidence() {
   assert(Array.isArray(report.coverage.gaps), 'report exposes coverage.gaps');
   assert(report.coverage.gaps.includes('go'), 'go is reported as a blind spot');
 }
+
+function testNoRecognizedStackLowersConfidence() {
+  // Codex correction #1: a repo with no recognized stack AND no blind-spot manifest
+  // was never really audited — it must not pass with high confidence.
+  const fixture = makeTempProject('rock-house-no-stack-');
+  writeFile(fixture, 'NOTES.txt', 'just notes — nothing the scanner recognizes');
+
+  const output = path.join(os.tmpdir(), `rock-house-no-stack-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  const report = readJson(output);
+  assert.strictEqual(report.confidence, 'Baixa', 'no recognized stack forces Baixa');
+  assert.strictEqual(report.coverage.audited, false, 'nothing recognized is not "audited"');
+  assert.strictEqual(report.coverage.gaps.length, 0, 'no blind-spot manifest, yet still blocked');
+  assert.notStrictEqual(result.status, 0, 'an unaudited repo must not earn a passing gate');
+}
+
+function testMonorepoBlindSpotDetected() {
+  // Codex correction #2: blind spots in subdirectories (monorepo) must be found,
+  // not only at the repo root.
+  const fixture = makeTempProject('rock-house-monorepo-');
+  writeFile(fixture, 'package.json', JSON.stringify({ dependencies: { next: '14.0.0', react: '18.0.0' } }));
+  writeFile(fixture, 'services/api/Cargo.toml', '[package]\nname = "api"');
+
+  const output = path.join(os.tmpdir(), `rock-house-monorepo-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  const report = readJson(output);
+  assert(report.coverage.gaps.includes('rust'), 'rust blind spot found in services/api/');
+  assert.strictEqual(report.confidence, 'Baixa', 'a nested blind spot forces Baixa');
+  assert.notStrictEqual(result.status, 0, 'monorepo blind spot blocks');
+}
 ```
 
-> `go.mod` and `main.go` are not in `SOURCE_EXTENSIONS`, so no findings are produced — the block comes purely from coverage, proving the P0 mechanism works in isolation.
+> `go.mod` and `main.go` are not in `SOURCE_EXTENSIONS`, so no findings are produced — the block comes purely from coverage, proving the P0 mechanism works in isolation. `testNoRecognizedStackLowersConfidence` covers the empty-`supported` case (correction #1); `testMonorepoBlindSpotDetected` covers repo-wide detection (correction #2).
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -588,6 +667,7 @@ Create `scripts/lib/rules/coverage.js`:
 const fs = require('fs');
 const path = require('path');
 
+// Stacks Rock House has NO rule family for → detecting one is a blind spot.
 const UNSUPPORTED = [
   { id: 'php', file: 'composer.json' },
   { id: 'go', file: 'go.mod' },
@@ -596,50 +676,78 @@ const UNSUPPORTED = [
   { id: 'java', file: 'pom.xml' },
   { id: 'java', file: 'build.gradle' }
 ];
+const ID_BY_FILE = Object.fromEntries(UNSUPPORTED.map((u) => [u.file, u.id]));
 
-function readPythonManifests(root) {
-  const parts = [];
-  for (const name of ['requirements.txt', 'pyproject.toml', 'Pipfile']) {
-    const full = path.join(root, name);
-    if (fs.existsSync(full)) parts.push(fs.readFileSync(full, 'utf8'));
-  }
-  return parts.join('\n');
+// Never descend into these while detecting stacks (perf + noise).
+const SKIP_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', '.next', 'out', 'coverage',
+  'vendor', 'venv', '.venv', '__pycache__', '.turbo', '.cache'
+]);
+
+// Codex correction #2: detection is repo-wide (monorepo-aware), not root-only.
+// One bounded walk collects both supported signals and blind-spot gaps anywhere in
+// the tree (e.g. services/api/Cargo.toml, apps/web/package.json).
+function detectStacks(root, maxDepth = 6) {
+  const supported = new Set();
+  const gaps = new Set();
+  const pyManifests = [];
+  let sawPackageJson = false;
+
+  (function walk(dir, depth) {
+    if (depth > maxDepth) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+    for (const entry of entries) {
+      const name = entry.name;
+      const full = path.join(dir, name);
+      if (entry.isDirectory()) {
+        if (!SKIP_DIRS.has(name)) walk(full, depth + 1);
+        continue;
+      }
+      if (ID_BY_FILE[name]) { gaps.add(ID_BY_FILE[name]); continue; }
+      if (name === 'package.json') {
+        sawPackageJson = true;
+        let pkg = {};
+        try { pkg = JSON.parse(fs.readFileSync(full, 'utf8')); } catch (e) { pkg = {}; }
+        const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+        if (deps.next) supported.add('nextjs');
+        if (deps.react) supported.add('react');
+        if (deps.express) supported.add('express');
+        if (deps['@supabase/supabase-js']) supported.add('supabase');
+        continue;
+      }
+      if (/^next\.config\.(js|mjs|ts)$/.test(name)) supported.add('nextjs');
+      if (name === 'manage.py') supported.add('django');
+      if (name === 'requirements.txt' || name === 'pyproject.toml' || name === 'Pipfile') {
+        try { pyManifests.push(fs.readFileSync(full, 'utf8')); } catch (e) { /* ignore */ }
+      }
+      if (name === 'index.html') supported.add('static');
+    }
+  })(root, 0);
+
+  const py = pyManifests.join('\n');
+  if (/(^|\n)\s*flask\b/i.test(py)) supported.add('flask');
+  if (/(^|\n)\s*django\b/i.test(py)) supported.add('django');
+  if (/(^|\n)\s*fastapi\b/i.test(py)) supported.add('fastapi');
+  if (supported.size === 0 && sawPackageJson) supported.add('node');
+
+  return { supported: [...supported], gaps: [...gaps] };
 }
 
-function detectStacks(root) {
-  const supported = [];
-  const gaps = [];
-
-  const pkgPath = path.join(root, 'package.json');
-  let pkg = null;
-  if (fs.existsSync(pkgPath)) {
-    try { pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')); } catch (e) { pkg = {}; }
-    const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
-    if (deps.next || fs.existsSync(path.join(root, 'next.config.js')) || fs.existsSync(path.join(root, 'next.config.mjs')) || fs.existsSync(path.join(root, 'next.config.ts'))) supported.push('nextjs');
-    if (deps.react) supported.push('react');
-    if (deps.express) supported.push('express');
-    if (deps['@supabase/supabase-js'] || fs.existsSync(path.join(root, 'supabase'))) supported.push('supabase');
-    if (supported.length === 0) supported.push('node');
-  }
-
-  const py = readPythonManifests(root);
-  if (/(^|\n)\s*flask\b/i.test(py)) supported.push('flask');
-  if (/(^|\n)\s*django\b/i.test(py) || fs.existsSync(path.join(root, 'manage.py'))) supported.push('django');
-  if (/(^|\n)\s*fastapi\b/i.test(py)) supported.push('fastapi');
-
-  for (const entry of UNSUPPORTED) {
-    if (fs.existsSync(path.join(root, entry.file)) && !gaps.includes(entry.id)) gaps.push(entry.id);
-  }
-
-  return { supported, gaps };
-}
-
+// Codex correction #1: an empty gap list is NOT enough to call a repo "audited".
+// If no supported stack was recognized at all, we inspected nothing of substance →
+// `audited` requires gaps.length === 0 AND supported.length > 0.
 function evaluateCoverage(root) {
   const { supported, gaps } = detectStacks(root);
-  const audited = gaps.length === 0;
-  const note = audited
-    ? (supported.length ? `Auditado: ${supported.join(', ')}.` : 'Nenhum stack reconhecido para auditar.')
-    : `Ponto cego: detectei ${gaps.join(', ')} mas não tenho regras específicas. Não confie no score.`;
+  const audited = gaps.length === 0 && supported.length > 0;
+  let note;
+  if (gaps.length > 0) {
+    note = `Ponto cego: detectei ${gaps.join(', ')} mas não tenho regras específicas. Não confie no score.`;
+  } else if (supported.length === 0) {
+    note = 'Nenhum stack reconhecido foi auditado de verdade — confiança rebaixada (não aprovo o que não inspecionei).';
+  } else {
+    note = `Auditado: ${supported.join(', ')}.`;
+  }
   return { supported, gaps, audited, note };
 }
 
@@ -680,7 +788,9 @@ Replace `calculateConfidence` (currently ~lines 434-438) with:
 
 ```js
 function calculateConfidence(summary, coverage) {
+  // Codex correction #1: a blind spot OR nothing-recognized both force low confidence.
   if (coverage && coverage.gaps && coverage.gaps.length > 0) return 'Baixa';
+  if (coverage && (!coverage.supported || coverage.supported.length === 0)) return 'Baixa';
   if (summary.unknown > 4) return 'Baixa';
   if (summary.unknown > 1) return 'Media';
   return 'Alta';
@@ -1381,4 +1491,10 @@ git commit -m "docs: correct secret-scanning description to reflect in-engine de
 
 **Type/name consistency:** `runRules`/`languageFor` (engine) used identically in Tasks 1 and 3; `addFinding(..., fixPack)` 8-arg signature defined in Task 3 and consumed by all families; `evaluateCoverage` defined in Task 4 and called once; `fixPack` shape (`why/before/after/command/refs`) consistent across all rules and the renderer; `DETECTION_RULES` exported in Task 2, consumed in Task 3, finalized in Task 8. ✅
 
-**Note on duplicate `checkId`s:** `H4` (×4) and `PY-SQL` (×2) intentionally share ids across multiple rule objects (different patterns, same classification). Findings are de-duplicated downstream by `fingerprintFor` (checkId + file + description), so distinct descriptions at distinct lines are preserved correctly.
+**Note on duplicate `checkId`s:** `H4` (×4) and `PY-SQL` (×2) intentionally share ids across multiple rule objects (different patterns, same classification). Findings are de-duplicated downstream by `fingerprintFor`, which now keys on **checkId + file + line + description** (Task 3 Step 5b, Codex correction #3) — so two distinct occurrences sharing a `checkId` and description but at different lines are preserved instead of collapsing into one.
+
+**Plan-review corrections applied (2026-06-01, Codex):**
+- **#1 — coverage-not-audited-when-empty:** Task 4 `evaluateCoverage` (`audited` requires `supported.length > 0`) + `calculateConfidence` (empty `supported` → `Baixa`). Test: `testNoRecognizedStackLowersConfidence`. ✅
+- **#2 — repo-wide blind-spot detection:** Task 4 `detectStacks` is a single recursive walk (skips heavy dirs), finding manifests in monorepo sub-packages. Test: `testMonorepoBlindSpotDetected`. ✅
+- **#3 — stronger fingerprint:** Task 3 Step 5b adds `line` to `fingerprintFor` (migration: one-time baseline reset, documented). ✅
+- **#4 — `/g` hardening in code:** Task 1 engine `test()` wrapper resets `lastIndex`; already shipped in `e87d49b`, plan code now matches. ✅

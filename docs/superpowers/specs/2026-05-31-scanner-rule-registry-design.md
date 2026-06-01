@@ -104,8 +104,19 @@ scripts/lib/rules/
    (generalized from `shouldFlagInnerHtml`): look ahead `flow.window` lines,
    require `flow.confirm`, and skip if `flow.negate` matches (e.g. a sanitizer).
 4. Applies `rule.allowlist` (path/line) to suppress known false positives.
-5. Emits a finding via the existing `addFinding(...)`, preserving fingerprinting,
-   suppressions, and baseline behavior unchanged.
+5. Emits a finding via the existing `addFinding(...)`, preserving suppression and
+   baseline behavior. The dedup **fingerprint now includes the line number**
+   (`checkId + file + line + description`) so two distinct occurrences that share a
+   `checkId` — e.g. the four `H4` rules or the two `PY-SQL` rules — can no longer
+   collapse into one and silently hide a finding (Codex plan-review correction #3).
+   Adding `line` invalidates pre-existing baseline files once (all findings read as
+   "new" until regenerated); this is a documented one-time reset.
+
+**Regex statefulness guard (in code, not convention).** `.test()` is stateful when a
+regex carries the `/g` or `/y` flag and would skip alternate matches across lines. The
+engine wraps every regex test in a helper that resets `lastIndex` before matching, so a
+stray flag in any rule can never produce an intermittent false negative — the guard
+lives in the engine, not in a written rule-authoring convention (Codex correction #4).
 
 The light-flow helper is the only "flow" mechanism in this pass. Real multi-file
 taint is explicitly deferred (Approach C).
@@ -119,17 +130,32 @@ whether a matching rule family was loaded and executed against matching files.
 - Detected stack **without** a matching rule family (a true blind spot, e.g.
   Django, Go, Rails) → coverage GAP.
 
+**Detection is repo-wide, not root-only (Codex correction #2).** Stack signals and
+blind-spot manifests are collected by a single bounded walk of the whole tree
+(skipping `node_modules`, `.git`, build dirs, etc.), so a monorepo's
+`services/api/Cargo.toml` or `apps/web/package.json` is found wherever it lives — not
+just at the repository root. A blind spot buried in a sub-package no longer slips past.
+
 New confidence rule, layered on top of the existing UNKNOWN-based logic:
 
 - Any coverage GAP for a detected stack → **confidence forced to `Baixa`** and a
   blind-spot note is recorded.
-- No coverage gaps → existing UNKNOWN-based confidence logic applies unchanged.
+- **No recognized stack at all** (empty `supported`) → also **forced to `Baixa`**
+  (Codex correction #1). A clean (empty) gap list is *not* enough to call a repo
+  "audited": if nothing recognized was inspected, we approved nothing of substance, so
+  `audited` requires `gaps.length === 0` **and** `supported.length > 0`.
+- Otherwise → existing UNKNOWN-based confidence logic applies unchanged.
 
 Because `Baixa` confidence already routes to `Bloqueado` in
-`decideCertification`, a project on an unsupported stack can no longer earn a
-passing grade by silence. The report gains a **"Cobertura"** section (JSON +
-Markdown) listing, per detected stack: `audited` / `not audited` and which rule
-families ran.
+`decideCertification`, a project on an unsupported stack — or one we don't recognize
+at all — can no longer earn a passing grade by silence. The report gains a
+**"Cobertura"** section (JSON + Markdown) listing, per detected stack: `audited` /
+`not audited` and which rule families ran.
+
+> **Calibration note:** purely static sites (HTML/CSS, no framework manifest) would
+> otherwise read as "no recognized stack" → `Baixa`. A root/sub `index.html` counts as
+> a minimal `static` supported signal (the engine does run `*`/`html` rules on it), so
+> Angelo's static freelance sites aren't false-blocked while genuinely opaque repos are.
 
 ### Test-safety of this change
 
