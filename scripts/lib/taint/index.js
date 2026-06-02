@@ -4,8 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const { parse, isAvailable } = require('./parser');
 const { buildFileIR } = require('./ir');
-const { analyzeFunctionIntra } = require('./engine');
+const { analyzeFunctionIntra, analyzeProjectTaint } = require('./engine');
 const { emitTaintFinding } = require('./findings');
+const { buildSymbolTable } = require('./symbols');
 
 const MAX_FILE_BYTES = 512 * 1024;
 
@@ -58,6 +59,14 @@ async function analyzeProject({ files, targetRoot, addFinding, gates, addUnknown
       }
     }
   }
+
+  // Inter-procedural: source and sink in different functions/files.
+  const symbols = buildSymbolTable(fileIRs);
+  let inter;
+  try { inter = analyzeProjectTaint(fileIRs, symbols); }
+  catch (e) { inter = { paths: [], blindEdges: 1 }; }
+  coverage.blindEdges += inter.blindEdges;
+  for (const p of inter.paths) emitTaintFinding(p, addFinding);
 
   coverage.note = coverage.blindEdges
     ? `Taint rodou; ${coverage.blindEdges} ponto(s) onde perdi o rastro.`

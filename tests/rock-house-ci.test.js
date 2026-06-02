@@ -27,6 +27,7 @@ async function run() {
   await testTaintScannerIntegration();
   await testTaintSymbols();
   await testTaintCallgraph();
+  await testTaintInterprocedural();
   testUnsupportedStackLowersConfidence();
   testNoRecognizedStackLowersConfidence();
   testMonorepoBlindSpotDetected();
@@ -1424,6 +1425,29 @@ async function testTaintCallgraph() {
 
   const blind = resolveCall(vFn.calls.find((c) => c.calleeLast === 'mystery'), viewsIr, table);
   assert.strictEqual(blind.kind, 'unresolved', 'unknown callee -> unresolved (blind edge)');
+}
+
+async function testTaintInterprocedural() {
+  const fixture = makeTempProject('rock-house-taint-inter-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  writeFile(fixture, 'db.py', ['def run_query(sql):', '    cur.execute(sql)'].join('\n'));
+  writeFile(fixture, 'views.py', [
+    'from flask import request',
+    'from db import run_query',
+    'def profile():',
+    '    uid = request.args["id"]',
+    '    run_query(uid)'
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-taint-inter-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.notStrictEqual(result.status, 0, 'cross-file SQLi must block');
+  const report = readJson(output);
+  const t = report.findings.find((f) => f.checkId === 'TAINT-SQLI');
+  assert(t, 'cross-file TAINT-SQLI found');
+  const files = (t.taintTrace || []).map((h) => h.file);
+  assert(files.includes('views.py') && files.includes('db.py'), 'trace spans both files');
 }
 
 async function testTaintSymbols() {
