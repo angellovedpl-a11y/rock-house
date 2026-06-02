@@ -49,7 +49,14 @@ const META = {
   'I6': { title: 'Path traversal', owasp: ['A01:2021 Broken Access Control'], cwe: ['CWE-22'], helpUri: 'https://owasp.org/Top10/A01_2021-Broken_Access_Control/' },
   'I7': { title: 'Server-side request forgery', owasp: ['A10:2021 Server-Side Request Forgery'], cwe: ['CWE-918'], helpUri: 'https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_%28SSRF%29/' },
   'C1': { title: 'Weak cryptographic hash', owasp: ['A02:2021 Cryptographic Failures'], cwe: ['CWE-327'], helpUri: 'https://owasp.org/Top10/A02_2021-Cryptographic_Failures/' },
-  'C2': { title: 'Insecure randomness for secret', owasp: ['A02:2021 Cryptographic Failures'], cwe: ['CWE-338'], helpUri: 'https://owasp.org/Top10/A02_2021-Cryptographic_Failures/' }
+  'C2': { title: 'Insecure randomness for secret', owasp: ['A02:2021 Cryptographic Failures'], cwe: ['CWE-338'], helpUri: 'https://owasp.org/Top10/A02_2021-Cryptographic_Failures/' },
+  'TAINT-SQLI': { title: 'Tainted input reaches SQL execution', owasp: ['A03:2021 Injection'], cwe: ['CWE-89'], helpUri: 'https://owasp.org/Top10/A03_2021-Injection/' },
+  'TAINT-SSTI': { title: 'Tainted input reaches template rendering', owasp: ['A03:2021 Injection'], cwe: ['CWE-94'], helpUri: 'https://owasp.org/Top10/A03_2021-Injection/' },
+  'TAINT-RCE': { title: 'Tainted input reaches code/command execution', owasp: ['A03:2021 Injection'], cwe: ['CWE-78'], helpUri: 'https://owasp.org/Top10/A03_2021-Injection/' },
+  'TAINT-DESERIALIZE': { title: 'Tainted input reaches unsafe deserialization', owasp: ['A08:2021 Software and Data Integrity Failures'], cwe: ['CWE-502'], helpUri: 'https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/' },
+  'TAINT-PATH': { title: 'Tainted input reaches a filesystem path', owasp: ['A01:2021 Broken Access Control'], cwe: ['CWE-22'], helpUri: 'https://owasp.org/Top10/A01_2021-Broken_Access_Control/' },
+  'TAINT-REDIRECT': { title: 'Tainted input reaches a redirect target', owasp: ['A01:2021 Broken Access Control'], cwe: ['CWE-601'], helpUri: 'https://owasp.org/www-community/attacks/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html' },
+  'TAINT-UNAVAILABLE': { title: 'Taint analysis unavailable (parser not loaded)', owasp: ['A09:2021 Security Logging and Monitoring Failures'], cwe: ['CWE-693'], helpUri: 'https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/' }
 };
 
 const DETECTION_RULES = [

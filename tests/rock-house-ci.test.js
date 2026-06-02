@@ -23,6 +23,7 @@ async function run() {
   testTaintCatalogs();
   await testTaintIR();
   await testTaintIntraprocedural();
+  testTaintFindings();
   testUnsupportedStackLowersConfidence();
   testNoRecognizedStackLowersConfidence();
   testMonorepoBlindSpotDetected();
@@ -95,6 +96,28 @@ async function testTaintIntraprocedural() {
   ir = buildFileIR(await parse(safe), 'views.py');
   res = analyzeFunctionIntra(ir.functions[0], 'views.py');
   assert.strictEqual(res.sinkHits.length, 0, 'sanitized value is not a sink hit');
+}
+
+function testTaintFindings() {
+  const { emitTaintFinding } = require('../scripts/lib/taint/findings');
+  const calls = [];
+  const addFinding = (...args) => calls.push(args);
+  const path = {
+    sinkId: 'TAINT-SQLI', severity: 'Critico',
+    hops: [
+      { file: 'views.py', line: 2, text: 'request.args["id"]', role: 'source' },
+      { file: 'db.py', line: 7, text: 'cur.execute(q)', role: 'sink' }
+    ]
+  };
+  emitTaintFinding(path, addFinding);
+  assert.strictEqual(calls.length, 1, 'one finding emitted');
+  const [severity, checkId, vector, file, line, desc, fix, fixPack] = calls[0];
+  assert.strictEqual(severity, 'Critico');
+  assert.strictEqual(checkId, 'TAINT-SQLI');
+  assert.strictEqual(file, 'db.py');
+  assert.strictEqual(line, 7, 'finding sits at the sink');
+  assert(desc.includes('request.args'), 'trace mentions the source');
+  assert(fixPack && fixPack.after, 'carries a fix pack');
 }
 
 function testUnsupportedStackLowersConfidence() {
