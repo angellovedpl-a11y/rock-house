@@ -19,6 +19,7 @@ run().catch((error) => {
 
 async function run() {
   testEngineMatching();
+  await testTaintParser();
   testUnsupportedStackLowersConfidence();
   testNoRecognizedStackLowersConfidence();
   testMonorepoBlindSpotDetected();
@@ -1299,6 +1300,13 @@ function runPolicyScan(root, assurancePath, publicKey, keyId, assurancePolicy, t
   });
   assert.notStrictEqual(result.status, 0, result.stdout + result.stderr);
   return readJson(output);
+}
+
+async function testTaintParser() {
+  const { parse } = require('../scripts/lib/taint/parser');
+  const tree = await parse('def view(req):\n    return req\n');
+  assert.strictEqual(tree.rootNode.type, 'module', 'root is module');
+  assert.strictEqual(tree.rootNode.firstChild.type, 'function_definition', 'first child is a function');
 }
 
 function testEngineMatching() {
