@@ -30,6 +30,7 @@ Skill global do Claude Code que aplica defesa em profundidade em todo projeto de
 | **Dependency audit** | `npm audit` / `pip audit` (native) | Zero install — comes with the package managers |
 | **Header checking** | `curl -I` + regex parsing | Universal, no dependencies |
 | **Script runtime** | PowerShell (.ps1) + Bash (.sh) | Windows + Linux/Mac coverage |
+| **Deep analysis** | Inter-procedural taint engine (Python/Flask) via vendored tree-sitter WASM | Tracks user input source→sink across functions/files; zero install (wasm vendored) |
 ## Alternatives Considered
 | Tool | Why NOT |
 |------|---------|
@@ -56,6 +57,12 @@ Conventions not yet established. Will populate as patterns emerge during develop
 ## Architecture
 
 Architecture not yet mapped. Follow existing patterns found in the codebase.
+
+### Taint engine (scripts/lib/taint/)
+Python/Flask inter-procedural taint analysis layered under the regex rules. Parses with a
+vendored tree-sitter WASM (no Python/toolchain needed). Emits `TAINT-*` findings with the
+full source→sink trace. Unresolved calls / parser failures become blind edges that lower
+confidence — it never reports "safe" for code it could not follow. JS/TS is the v2 target.
 <!-- GSD:architecture-end -->
 
 <!-- GSD:skills-start source:skills/ -->

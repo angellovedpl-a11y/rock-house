@@ -9,6 +9,7 @@
     "examples",
     "coverage",
     "scripts/lib/rules",
+    "scripts/vendor",
     "tests"
   ],
   "allowCriticalSuppressions": false,

@@ -64,6 +64,7 @@ async function run() {
   testInvalidConfigErrors();
   await testTaintBlindEdgeLowersConfidence();
   await testTaintTraceRendering();
+  await testTaintUnavailableFallsBackToRegex();
   console.log('rock-house-ci tests passed');
 }
 
@@ -1248,7 +1249,7 @@ function runScanner(target, output, minLevel, options = {}) {
     args.push('--markdown', options.markdownOutput);
   }
 
-  const env = { ...process.env };
+  const env = { ...process.env, ...(options.env || {}) };
   if (options.stepSummary) {
     env.GITHUB_STEP_SUMMARY = options.stepSummary;
   }
@@ -1567,4 +1568,22 @@ async function testTaintTraceRendering() {
   runScanner(fixture, output, 'bronze', { markdownOutput });
   const md = fs.readFileSync(markdownOutput, 'utf8');
   assert(/\*\*Fluxo:\*\*/.test(md), 'fixPacksSection renders the **Fluxo:** trace line');
+}
+
+async function testTaintUnavailableFallsBackToRegex() {
+  const fixture = makeTempProject('rock-house-taint-na-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  writeFile(fixture, 'app.py', [
+    'app.run(debug=True)',           // regex rule PY-DEBUG must still fire
+    'q = request.args["id"]',
+    'cur.execute(q)'
+  ].join('\n'));
+  const output = path.join(os.tmpdir(), `rock-house-taint-na-${Date.now()}.json`);
+  // Force the taint parser to fail by pointing it at a non-existent wasm.
+  // Use prata (silver) gate: PY-DEBUG earns Bronze cert, which fails the prata gate → exit 1.
+  const result = runScanner(fixture, output, 'prata', { env: { ROCKHOUSE_PYTHON_WASM: path.join(fixture, 'nope.wasm') } });
+  const report = readJson(output);
+  assert(report.findings.some((f) => f.checkId === 'PY-DEBUG'), 'regex rules still run when taint is unavailable');
+  assert(report.coverage.taint.ran === false || report.coverage.taint.blindEdges >= 1, 'taint reported unavailable, not silently clean');
+  assert.notStrictEqual(result.status, 0, 'still blocks on the regex findings (Bronze cert < prata gate)');
 }
