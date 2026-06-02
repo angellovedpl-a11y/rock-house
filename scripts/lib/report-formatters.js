@@ -1,3 +1,5 @@
+const { formatHop } = require('./taint/findings');
+
 const REPO_URL = 'https://github.com/angellovedpl-a11y/rock-house';
 
 function toMarkdown(report) {
@@ -141,7 +143,7 @@ function toSarif(report) {
             fixAfter: finding.fixPack?.after || '',
             fixCommand: finding.fixPack?.command || '',
             taintTrace: Array.isArray(finding.taintTrace)
-              ? finding.taintTrace.map((h) => `${h.text} (${h.file}:${h.line})`)
+              ? finding.taintTrace.map(formatHop)
               : []
           }
         }))
@@ -180,7 +182,7 @@ function fixPacksSection(items) {
     const lines = [
       `### [${f.severity}] ${f.checkId} — ${escapeMd(f.rule?.title || f.description)}  (\`${f.file}:${f.line}\`)`,
       Array.isArray(f.taintTrace) && f.taintTrace.length
-        ? `**Fluxo:** ${escapeMd(f.taintTrace.map((h) => `${h.text} (${h.file}:${h.line})`).join(' → '))}`
+        ? `**Fluxo:** ${escapeMd(f.taintTrace.map(formatHop).join(' → '))}`
         : '',
       fp.why ? `**Por que:** ${escapeMd(fp.why)}` : '',
       fp.before ? `**Antes:** \`${escapeMd(fp.before)}\`` : '',

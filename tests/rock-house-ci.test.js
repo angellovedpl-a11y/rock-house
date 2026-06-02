@@ -1566,5 +1566,5 @@ async function testTaintTraceRendering() {
   const markdownOutput = path.join(fixture, 's.md');
   runScanner(fixture, output, 'bronze', { markdownOutput });
   const md = fs.readFileSync(markdownOutput, 'utf8');
-  assert(md.includes('Fluxo'), 'markdown shows the taint flow description');
+  assert(/\*\*Fluxo:\*\*/.test(md), 'fixPacksSection renders the **Fluxo:** trace line');
 }

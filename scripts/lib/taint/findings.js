@@ -12,8 +12,12 @@ const VECTOR_BY_ID = {
   'TAINT-DESERIALIZE': 'Injection', 'TAINT-PATH': 'Injection', 'TAINT-REDIRECT': 'Headers & CORS'
 };
 
+function formatHop(h) {
+  return `${h.text} (${h.file}:${h.line})`;
+}
+
 function renderTrace(hops) {
-  return hops.map((h) => `${h.text} (${h.file}:${h.line})`).join(' → ');
+  return hops.map(formatHop).join(' → ');
 }
 
 function emitTaintFinding(taintPath, addFinding) {
@@ -28,4 +32,4 @@ function emitTaintFinding(taintPath, addFinding) {
   return finding;
 }
 
-module.exports = { emitTaintFinding, renderTrace };
+module.exports = { emitTaintFinding, renderTrace, formatHop };
