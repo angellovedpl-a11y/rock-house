@@ -21,6 +21,7 @@ async function run() {
   testEngineMatching();
   await testTaintParser();
   testTaintCatalogs();
+  await testTaintIR();
   testUnsupportedStackLowersConfidence();
   testNoRecognizedStackLowersConfidence();
   testMonorepoBlindSpotDetected();
@@ -56,6 +57,26 @@ async function run() {
   testMissingConfigErrors();
   testInvalidConfigErrors();
   console.log('rock-house-ci tests passed');
+}
+
+async function testTaintIR() {
+  const { parse } = require('../scripts/lib/taint/parser');
+  const { buildFileIR } = require('../scripts/lib/taint/ir');
+  const src = [
+    '@app.route("/u/<id>")',
+    'def profile(id):',
+    '    q = request.args["id"]',
+    '    cur.execute(q)',
+    '    return q'
+  ].join('\n');
+  const ir = buildFileIR(await parse(src), 'views.py');
+  assert.strictEqual(ir.functions.length, 1, 'one function');
+  const fn = ir.functions[0];
+  assert.strictEqual(fn.name, 'profile');
+  assert.deepStrictEqual(fn.params, ['id'], 'params captured');
+  assert(fn.decorators.some((d) => d.includes('app.route')), 'route decorator captured');
+  assert(fn.assignments.some((a) => a.targets.includes('q')), 'assignment q captured');
+  assert(fn.calls.some((c) => c.calleeDotted.endsWith('execute')), 'execute call captured');
 }
 
 function testUnsupportedStackLowersConfidence() {
