@@ -19,6 +19,7 @@ const { impactFor, ruleFor } = require('./lib/rules');
 const { languageFor, runRules } = require('./lib/rules/engine');
 const { DETECTION_RULES } = require('./lib/rules/index');
 const { evaluateCoverage } = require('./lib/rules/coverage');
+const { analyzeProject } = require('./lib/taint');
 const { scanPnpmWorkspace } = require('./lib/supply-chain-detection');
 
 const args = parseArgs(process.argv.slice(2));
@@ -100,6 +101,7 @@ async function main() {
   const observabilityReport = evaluateObservability({ targetRoot, files, packageJsonPath, observability, fail });
 
   scanFiles(files);
+  const taintResult = await analyzeProject({ files, targetRoot, addFinding, gates, addUnknown });
   scanPackageJson(packageJsonPath, hasPackageJson);
   scanLockfile(hasPackageJson);
   scanPnpmWorkspace(targetRoot, hasPackageJson, addFinding);
@@ -133,6 +135,7 @@ async function main() {
   const summary = summarize(gateFindings, unknown);
   const score = calculateScore(summary);
   const coverage = evaluateCoverage(targetRoot);
+  coverage.taint = taintResult.taint;
   const confidence = calculateConfidence(summary, coverage);
   const certification = decideCertification(summary, score, confidence);
   const result = certification === 'Bloqueado' ? 'blocked' : 'passed';
@@ -316,10 +319,11 @@ function addFinding(severity, checkId, vector, file, line, description, fix, fix
         expires: suppression.expires || null
       }
     });
-    return;
+    return null;
   }
 
   findings.push(finding);
+  return finding;
 }
 
 function findSuppression(finding) {
@@ -392,9 +396,11 @@ function calculateScore(summary) {
 }
 
 function calculateConfidence(summary, coverage) {
-  // Codex correction #1: a blind spot OR nothing-recognized both force low confidence.
   if (coverage && coverage.gaps && coverage.gaps.length > 0) return 'Baixa';
   if (coverage && (!coverage.supported || coverage.supported.length === 0)) return 'Baixa';
+  if (coverage && coverage.taint && coverage.taint.ran && coverage.taint.blindEdges > 0) {
+    if (summary.unknown <= 1) return 'Media';
+  }
   if (summary.unknown > 4) return 'Baixa';
   if (summary.unknown > 1) return 'Media';
   return 'Alta';

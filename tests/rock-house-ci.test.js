@@ -24,6 +24,7 @@ async function run() {
   await testTaintIR();
   await testTaintIntraprocedural();
   testTaintFindings();
+  await testTaintScannerIntegration();
   testUnsupportedStackLowersConfidence();
   testNoRecognizedStackLowersConfidence();
   testMonorepoBlindSpotDetected();
@@ -118,6 +119,27 @@ function testTaintFindings() {
   assert.strictEqual(line, 7, 'finding sits at the sink');
   assert(desc.includes('request.args'), 'trace mentions the source');
   assert(fixPack && fixPack.after, 'carries a fix pack');
+}
+
+async function testTaintScannerIntegration() {
+  const fixture = makeTempProject('rock-house-taint-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  writeFile(fixture, 'app.py', [
+    'from flask import request',
+    'def profile():',
+    '    q = request.args["id"]',
+    '    cur.execute(q)'
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-taint-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.notStrictEqual(result.status, 0, 'tainted SQLi must block');
+  const report = readJson(output);
+  const t = report.findings.find((f) => f.checkId === 'TAINT-SQLI');
+  assert(t, 'TAINT-SQLI finding present');
+  assert(Array.isArray(t.taintTrace) && t.taintTrace.length >= 2, 'finding carries a trace');
+  assert(report.coverage.taint && report.coverage.taint.ran === true, 'coverage records taint ran');
 }
 
 function testUnsupportedStackLowersConfidence() {
