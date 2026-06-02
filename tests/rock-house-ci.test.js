@@ -20,6 +20,7 @@ run().catch((error) => {
 async function run() {
   testEngineMatching();
   await testTaintParser();
+  testTaintCatalogs();
   testUnsupportedStackLowersConfidence();
   testNoRecognizedStackLowersConfidence();
   testMonorepoBlindSpotDetected();
@@ -1300,6 +1301,17 @@ function runPolicyScan(root, assurancePath, publicKey, keyId, assurancePolicy, t
   });
   assert.notStrictEqual(result.status, 0, result.stdout + result.stderr);
   return readJson(output);
+}
+
+function testTaintCatalogs() {
+  const c = require('../scripts/lib/taint/catalogs');
+  assert.strictEqual(c.isSourceExpr('request.args'), true, 'request.args is a source');
+  assert.strictEqual(c.isSourceExpr('os.path.join'), false, 'os.path.join is not a source');
+  const sink = c.sinkFor('cursor.execute');
+  assert(sink && sink.id === 'TAINT-SQLI', 'cursor.execute -> TAINT-SQLI');
+  assert.strictEqual(c.sinkFor('render_template_string').id, 'TAINT-SSTI', 'SSTI sink');
+  assert.strictEqual(c.isSanitizer('int'), true, 'int() sanitizes');
+  assert.strictEqual(c.isSanitizer('escape'), true, 'escape() sanitizes');
 }
 
 async function testTaintParser() {
