@@ -398,8 +398,14 @@ function calculateScore(summary) {
 function calculateConfidence(summary, coverage) {
   if (coverage && coverage.gaps && coverage.gaps.length > 0) return 'Baixa';
   if (coverage && (!coverage.supported || coverage.supported.length === 0)) return 'Baixa';
-  if (coverage && coverage.taint && coverage.taint.ran && coverage.taint.blindEdges > 0) {
-    if (summary.unknown <= 1) return 'Media';
+  // Any blind edge in the taint pass lowers confidence, REGARDLESS of whether the
+  // deep pass ran. This separates "no Python to analyze" (blindEdges===0 → no
+  // penalty, can still be Alta) from "Python we could NOT analyze" (blindEdges>0,
+  // e.g. parser unavailable, or a lost trace → never Alta). This condition subsumes
+  // the old `ran===true && blindEdges>0` clause.
+  if (coverage && coverage.taint && coverage.taint.blindEdges > 0) {
+    if (summary.unknown > 1) return 'Baixa';
+    return 'Media';
   }
   if (summary.unknown > 4) return 'Baixa';
   if (summary.unknown > 1) return 'Media';

@@ -10,7 +10,7 @@ const { buildSymbolTable } = require('./symbols');
 
 const MAX_FILE_BYTES = 512 * 1024;
 
-async function analyzeProject({ files, targetRoot, addFinding, gates, addUnknown }) {
+async function analyzeProject({ files, targetRoot, addFinding, addUnknown }) {
   const pyFiles = files.filter((f) => f.endsWith('.py'));
   const coverage = { ran: false, blindEdges: 0, note: '' };
   if (pyFiles.length === 0) {

@@ -77,32 +77,174 @@ function analyzeFunctionIntra(fn, file, seedParams = []) {
 
 const { resolveCall } = require('./callgraph');
 
-const MAX_DEPTH = 8; // reserved for future multi-hop; current pass is one-hop caller->callee summary
+// Bound on summary-composition fixpoint iterations. Also bounds trace/path depth and
+// guarantees termination on cyclic (even self-recursive) call graphs: each iteration
+// only adds sink-reachability facts, the lattice is finite, and we stop on "no change".
+const MAX_DEPTH = 8;
+
+function sevForSink(sinkId) {
+  return (sinkId === 'TAINT-PATH' || sinkId === 'TAINT-REDIRECT' || sinkId === 'TAINT-DESERIALIZE') ? 'Alto' : 'Critico';
+}
+
+// Walk a function with its params seeded as tainted and report, per call, which
+// of the function's OWN params taint each argument (provenance), plus per-var origin
+// for trace building. Sanitizer/parameterized-SQL gating is identical to the intra
+// pass: a value laundered through int()/escape()/etc. is NOT tainted, so it produces
+// no flow and never composes into a sink.
+//
+// Returns:
+//   resolvedFlows: [{ param, argIndex, calleeQual, calleeName, callLine, argText, origin }]
+//       — a seed param flows into a RESOLVED repo function's argument at argIndex.
+//   blindFlows:    [{ callLine, calleeDotted }]
+//       — a tainted arg (from a source or a seed param) flows into an UNRESOLVED call.
+function computeParamCallFlows(fn, file, symbols) {
+  const seedParams = fn.params || [];
+  const seedSet = new Set(seedParams);
+  // provenance: var -> Set(seedParam) that taints it. A var tainted only by a source
+  // (not by any param) maps to an empty set but is present in `taintedBySource`.
+  const provenance = new Map();
+  const taintedBySource = new Set(); // vars tainted (incl. via source), regardless of params
+  const originOf = new Map();        // var -> { file, line, text }
+  for (const p of seedParams) provenance.set(p, new Set([p]));
+
+  const resolvedFlows = [];
+  const blindFlows = [];
+
+  // taintedVars view (booleans) for the existing exprIsTainted gate.
+  const taintedVars = new Set(seedParams);
+
+  // Which seed params taint this expression? Honors sanitizer gating via exprIsTainted.
+  function provenanceOf(expr) {
+    const set = new Set();
+    if (!expr) return set;
+    if (!exprIsTainted(expr, taintedVars)) return set; // sanitized / untainted → no provenance
+    for (const id of expr.reads || []) {
+      const pv = provenance.get(id);
+      if (pv) for (const p of pv) set.add(p);
+    }
+    return set;
+  }
+
+  const events = [];
+  for (const a of fn.assignments) events.push({ kind: 'assign', line: a.line, a });
+  const seenInterCallKeys = new Set();
+  for (const c of fn.calls) {
+    const key = `${c.line}:${c.calleeDotted}`;
+    if (!seenInterCallKeys.has(key)) { seenInterCallKeys.add(key); events.push({ kind: 'call', line: c.line, c }); }
+  }
+  events.sort((x, y) => x.line - y.line);
+
+  for (const ev of events) {
+    if (ev.kind === 'assign') {
+      const t = exprIsTainted(ev.a.value, taintedVars);
+      const pv = provenanceOf(ev.a.value);
+      for (const tgt of ev.a.targets) {
+        if (t) {
+          taintedVars.add(tgt); taintedBySource.add(tgt);
+          provenance.set(tgt, new Set(pv));
+          originOf.set(tgt, { file: file.path, line: ev.a.line, text: ev.a.value.text });
+        } else {
+          taintedVars.delete(tgt); taintedBySource.delete(tgt);
+          provenance.delete(tgt); originOf.delete(tgt);
+        }
+      }
+    } else {
+      const call = ev.c;
+      // Parameterized SQL (execute(sql, params)) where the SQL string is clean is safe.
+      const sink = sinkFor(call.calleeDotted);
+      const args = call.args || [];
+      const taintedArgIdx = args.findIndex((arg) => exprIsTainted(arg, taintedVars));
+      if (taintedArgIdx === -1) continue;
+      if (sink && sink.id === 'TAINT-SQLI' && sqlIsParameterized(call, taintedVars)) continue;
+
+      const resolution = resolveCall(call, file, symbols);
+      if (resolution.kind === 'external') continue; // modeled sink/sanitizer — intra pass owns it
+      if (resolution.kind === 'unresolved') {
+        blindFlows.push({ callLine: call.line, calleeDotted: call.calleeDotted });
+        continue;
+      }
+      // resolution.kind === 'function' — a resolved repo call. Record a flow for every
+      // tainted argument whose taint derives (at least partly) from one of THIS
+      // function's params, so the fixpoint can compose transitively.
+      const callee = resolution.fn;
+      for (let i = 0; i < args.length; i++) {
+        const argExpr = args[i];
+        if (!exprIsTainted(argExpr, taintedVars)) continue;
+        if (sink && sink.id === 'TAINT-SQLI' && i === 0 && sqlIsParameterized(call, taintedVars)) continue;
+        const pv = provenanceOf(argExpr);
+        const origin = (argExpr.reads || []).map((r) => originOf.get(r)).find(Boolean);
+        const calleeParam = (callee.params || [])[i];
+        if (!calleeParam) continue; // arity mismatch / *args — can't map; skip (callee summary unaffected)
+        for (const param of pv) {
+          resolvedFlows.push({
+            param, argIndex: i, calleeQual: callee.qualname, calleeName: callee.name,
+            callLine: call.line, argText: argExpr.text, origin
+          });
+        }
+        // A source-tainted (not param-tainted) arg flowing into a resolved callee is the
+        // entry-point case; it does not compose a param of THIS function but the inter
+        // walk below handles emission. No flow recorded here.
+      }
+    }
+  }
+
+  return { resolvedFlows, blindFlows };
+}
 
 function analyzeProjectTaint(fileIRs, symbols) {
   const paths = [];
   let blindEdges = 0;
 
-  // 1) Per-function summaries (seed each param tainted, see where it lands).
-  const summaryOf = new Map(); // qualname -> summary
   const fileOfFn = new Map();  // qualname -> FileIR
-  for (const ir of fileIRs) for (const fn of ir.functions) fileOfFn.set(fn.qualname, ir);
+  const fnByQual = new Map();  // qualname -> FunctionIR
+  for (const ir of fileIRs) {
+    for (const fn of ir.functions) { fileOfFn.set(fn.qualname, ir); fnByQual.set(fn.qualname, fn); }
+  }
+
+  // 1) Initial summaries: direct (modeled) sinks reached within each function.
+  const summaryOf = new Map(); // qualname -> summary { paramReachesSink, paramTaintsReturn }
+  const flowsOf = new Map();   // qualname -> { resolvedFlows, blindFlows }
   for (const ir of fileIRs) {
     for (const fn of ir.functions) {
       const res = analyzeFunctionIntra(fn, ir.path, fn.params);
       summaryOf.set(fn.qualname, res.summary);
+      flowsOf.set(fn.qualname, computeParamCallFlows(fn, ir, symbols));
     }
   }
 
-  // 2) Walk each function; a tainted local flowing into a call whose callee summary
-  //    marks that param as sink-reaching => cross-file path.
+  // 2) Compose summaries to a fixpoint, bounded by MAX_DEPTH iterations. A param p of F
+  //    reaches a sink if it flows into a resolved callee G at index i AND G's param[i]
+  //    reaches a sink (transitively). Monotonic + finite + "no change" stop ⇒ terminates
+  //    even on cyclic / self-recursive call graphs.
+  for (let iter = 0; iter < MAX_DEPTH; iter++) {
+    let changed = false;
+    for (const [qual, flows] of flowsOf) {
+      const summary = summaryOf.get(qual);
+      for (const flow of flows.resolvedFlows) {
+        const calleeSummary = summaryOf.get(flow.calleeQual);
+        if (!calleeSummary) continue;
+        const callee = fnByQual.get(flow.calleeQual);
+        const calleeParam = callee && (callee.params || [])[flow.argIndex];
+        if (!calleeParam || !calleeSummary.paramReachesSink.has(calleeParam)) continue;
+        const sinkId = calleeSummary.paramReachesSink.get(calleeParam)[0];
+        const existing = summary.paramReachesSink.get(flow.param) || [];
+        if (!existing.includes(sinkId)) {
+          if (!summary.paramReachesSink.has(flow.param)) summary.paramReachesSink.set(flow.param, []);
+          summary.paramReachesSink.get(flow.param).push(sinkId);
+          changed = true;
+        }
+      }
+    }
+    if (!changed) break; // fixpoint reached
+  }
+
+  // 3) Emit cross-file paths + honest blind edges by walking each function once more.
   for (const ir of fileIRs) {
     for (const fn of ir.functions) {
       const tainted = new Set();
       const originOf = new Map(); // var -> { file, line, text }
       const events = [];
       for (const a of fn.assignments) events.push({ kind: 'assign', line: a.line, a });
-      // Deduplicate calls by (line, calleeDotted) — same as intra pass.
       const seenInterCallKeys = new Set();
       for (const c of fn.calls) {
         const key = `${c.line}:${c.calleeDotted}`;
@@ -115,28 +257,33 @@ function analyzeProjectTaint(fileIRs, symbols) {
           const t = exprIsTainted(ev.a.value, tainted);
           for (const tgt of ev.a.targets) {
             if (t) { tainted.add(tgt); originOf.set(tgt, { file: ir.path, line: ev.a.line, text: ev.a.value.text }); }
-            else tainted.delete(tgt);
+            else { tainted.delete(tgt); originOf.delete(tgt); }
           }
         } else {
           const call = ev.c;
+          const sink = sinkFor(call.calleeDotted);
           const taintedArgIdx = (call.args || []).findIndex((arg) => exprIsTainted(arg, tainted));
           if (taintedArgIdx === -1) continue;
+          // Parameterized SQL with a clean string is safe — not a flow, not a blind edge.
+          if (sink && sink.id === 'TAINT-SQLI' && sqlIsParameterized(call, tainted)) continue;
           const resolution = resolveCall(call, ir, symbols);
           if (resolution.kind === 'unresolved') { blindEdges += 1; continue; }
           if (resolution.kind !== 'function') continue; // external/modeled sinks handled by intra pass
           const callee = resolution.fn;
           const summary = summaryOf.get(callee.qualname);
           const param = callee.params[taintedArgIdx];
-          if (!summary || !param || !summary.paramReachesSink.has(param)) continue;
+          if (!summary || !param) {
+            // Resolved callee but we can't map the argument to a param (arity/star-args):
+            // sink-reachability is UNKNOWN within the bound → honest blind edge.
+            blindEdges += 1;
+            continue;
+          }
+          if (!summary.paramReachesSink.has(param)) continue; // resolved & known NOT to reach a sink
           const sinkId = summary.paramReachesSink.get(param)[0];
-          const sev = (sinkId === 'TAINT-PATH' || sinkId === 'TAINT-REDIRECT' || sinkId === 'TAINT-DESERIALIZE') ? 'Alto' : 'Critico';
+          const sev = sevForSink(sinkId);
           const argExpr = call.args[taintedArgIdx];
           const origin = (argExpr.reads || []).map((r) => originOf.get(r)).find(Boolean);
-          const calleeFile = fileOfFn.get(callee.qualname);
-          const hops = [];
-          if (origin) hops.push({ file: origin.file, line: origin.line, text: origin.text, role: 'source' });
-          hops.push({ file: ir.path, line: call.line, text: `${callee.name}(${argExpr.text})`, role: 'call' });
-          hops.push({ file: calleeFile.path, line: callee.startLine, text: `${callee.name}() → sink`, role: 'sink' });
+          const hops = buildHops(callee, fileOfFn, fnByQual, flowsOf, param, ir, call, argExpr, origin);
           paths.push({ sinkId, severity: sev, hops });
         }
       }
@@ -146,4 +293,48 @@ function analyzeProjectTaint(fileIRs, symbols) {
   return { paths, blindEdges };
 }
 
-module.exports = { analyzeFunctionIntra, exprIsTainted, exprIsSource, analyzeProjectTaint };
+// Build a source→…→sink hop trace, expanding intermediate resolved hops up to MAX_DEPTH
+// so deep chains (profile → wrapper → run_query → execute) point at the TRUE sink file/line.
+function buildHops(callee, fileOfFn, fnByQual, flowsOf, entryParam, callerIr, call, argExpr, origin) {
+  const hops = [];
+  if (origin) hops.push({ file: origin.file, line: origin.line, text: origin.text, role: 'source' });
+  hops.push({ file: callerIr.path, line: call.line, text: `${callee.name}(${argExpr.text})`, role: 'call' });
+
+  // Follow the resolved chain: from `callee` with `entryParam`, descend through resolved
+  // flows toward the first modeled sink, recording each intermediate call. Bounded by
+  // MAX_DEPTH and a visited-set so cycles can't loop forever.
+  let curQual = callee.qualname;
+  let curParam = entryParam;
+  const visited = new Set();
+  for (let depth = 0; depth < MAX_DEPTH; depth++) {
+    if (visited.has(`${curQual}#${curParam}`)) break;
+    visited.add(`${curQual}#${curParam}`);
+    const curFn = fnByQual.get(curQual);
+    const curFile = fileOfFn.get(curQual);
+    if (!curFn || !curFile) break;
+    // Does this function hit a modeled sink directly on curParam? Detect via a fresh intra pass.
+    const intra = analyzeFunctionIntra(curFn, curFile.path, [curParam]);
+    const directHit = intra.sinkHits.find((h) => true);
+    // Find the next resolved hop that carries curParam onward.
+    const flows = flowsOf.get(curQual);
+    const next = flows && flows.resolvedFlows.find((f) => f.param === curParam);
+    if (directHit) {
+      hops.push({ file: directHit.file, line: directHit.line, text: `${directHit.calleeDotted}(...)`, role: 'sink' });
+      return hops;
+    }
+    if (!next) break;
+    const nextFn = fnByQual.get(next.calleeQual);
+    const nextFile = fileOfFn.get(next.calleeQual);
+    if (!nextFn || !nextFile) break;
+    hops.push({ file: curFile.path, line: next.callLine, text: `${nextFn.name}(${next.argText})`, role: 'call' });
+    curQual = next.calleeQual;
+    curParam = (nextFn.params || [])[next.argIndex];
+    if (!curParam) break;
+  }
+  // Fallback sink hop (couldn't fully expand): point at the callee definition.
+  const calleeFile = fileOfFn.get(callee.qualname);
+  hops.push({ file: (calleeFile || callerIr).path, line: callee.startLine, text: `${callee.name}() → sink`, role: 'sink' });
+  return hops;
+}
+
+module.exports = { analyzeFunctionIntra, exprIsTainted, exprIsSource, analyzeProjectTaint, computeParamCallFlows };

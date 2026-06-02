@@ -65,6 +65,8 @@ async function run() {
   await testTaintBlindEdgeLowersConfidence();
   await testTaintTraceRendering();
   await testTaintUnavailableFallsBackToRegex();
+  await testTaintMultiHopChainIsFound();
+  await testTaintUnavailableIsNotHighConfidence();
   console.log('rock-house-ci tests passed');
 }
 
@@ -1590,4 +1592,60 @@ async function testTaintUnavailableFallsBackToRegex() {
   assert.strictEqual(report.coverage.taint.ran, false, 'taint did not run (parser unavailable)');
   assert(report.coverage.taint.blindEdges >= 1, 'degradation recorded as a blind edge');
   assert.notStrictEqual(result.status, 0, 'still blocks on the regex findings (Bronze cert < prata gate)');
+}
+
+// GAP 1: a tainted source flows through a chain of RESOLVED repo calls
+// (profile -> wrapper -> run_query -> cur.execute). Each intermediate function's
+// summary is empty on its own; only transitive composition surfaces the SQLi.
+async function testTaintMultiHopChainIsFound() {
+  const fixture = makeTempProject('rock-house-taint-multihop-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  writeFile(fixture, 'db.py', [
+    'def wrapper(s):',
+    '    run_query(s)',
+    'def run_query(sql):',
+    '    cur.execute(sql)'
+  ].join('\n'));
+  writeFile(fixture, 'views.py', [
+    'from flask import request',
+    'from db import wrapper',
+    'def profile():',
+    '    uid = request.args["id"]',
+    '    wrapper(uid)'
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-taint-multihop-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.notStrictEqual(result.status, 0, 'multi-hop cross-file SQLi must block');
+  const report = readJson(output);
+  const t = report.findings.find((f) => f.checkId === 'TAINT-SQLI');
+  assert(t, 'multi-hop TAINT-SQLI found');
+  const files = (t.taintTrace || []).map((h) => h.file);
+  assert(files.includes('views.py'), 'trace includes the source/views file');
+  assert(files.includes('db.py'), 'trace includes the true sink file');
+}
+
+// GAP 2: when the WASM parser cannot load, deep analysis never runs (ran===false)
+// but a blind edge is recorded and a TAINT-UNAVAILABLE unknown is emitted. A Python
+// project we could not analyze must NOT score Alta.
+async function testTaintUnavailableIsNotHighConfidence() {
+  const fixture = makeTempProject('rock-house-taint-na-conf-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  // A .git dir suppresses the S2 (git-history) unknown, keeping summary.unknown at 1
+  // (just TAINT-UNAVAILABLE). That isolates the discriminator: only the blind-edge
+  // penalty — which the old code skipped when ran===false — can lower confidence.
+  fs.mkdirSync(path.join(fixture, '.git'), { recursive: true });
+  writeFile(fixture, 'app.py', [
+    'from flask import request',
+    'def v():',
+    '    q = request.args["id"]',
+    '    cur.execute(q)'
+  ].join('\n'));
+  const output = path.join(os.tmpdir(), `rock-house-taint-na-conf-${Date.now()}.json`);
+  runScanner(fixture, output, 'bronze', { env: { ROCKHOUSE_PYTHON_WASM: path.join(fixture, 'nope.wasm') } });
+  const report = readJson(output);
+  assert.strictEqual(report.coverage.taint.ran, false, 'taint did not run (parser unavailable)');
+  assert(report.coverage.taint.blindEdges >= 1, 'parser-unavailable recorded as a blind edge');
+  assert.notStrictEqual(report.confidence, 'Alta', 'Python we could not analyze is not Alta confidence');
 }
