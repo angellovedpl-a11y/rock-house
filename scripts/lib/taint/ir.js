@@ -158,7 +158,22 @@ function buildFileIR(tree, relPath) {
     }
     for (const child of node.namedChildren) walk(child);
   })(tree.rootNode);
-  return { path: relPath, modulePrefix, functions };
+  const imports = new Map(); // localName -> "module.name"
+  (function walkImports(node) {
+    if (node.type === 'import_from_statement') {
+      const moduleNode = node.childForFieldName('module_name');
+      const moduleName = moduleNode ? src.slice(moduleNode.startIndex, moduleNode.endIndex) : '';
+      const moduleNodeId = moduleNode ? moduleNode.id : -1;
+      for (const child of node.namedChildren) {
+        if (child.type === 'dotted_name' && child.id !== moduleNodeId) {
+          const local = src.slice(child.startIndex, child.endIndex);
+          imports.set(local, `${moduleName}.${local}`);
+        }
+      }
+    }
+    for (const c of node.namedChildren) walkImports(c);
+  })(tree.rootNode);
+  return { path: relPath, modulePrefix, functions, imports };
 }
 
 module.exports = { buildFileIR, describeExpr, dottedName };

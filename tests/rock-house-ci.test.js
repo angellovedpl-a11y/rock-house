@@ -25,6 +25,7 @@ async function run() {
   await testTaintIntraprocedural();
   testTaintFindings();
   await testTaintScannerIntegration();
+  await testTaintSymbols();
   testUnsupportedStackLowersConfidence();
   testNoRecognizedStackLowersConfidence();
   testMonorepoBlindSpotDetected();
@@ -1403,6 +1404,20 @@ async function testTaintParser() {
   const tree = await parse('def view(req):\n    return req\n');
   assert.strictEqual(tree.rootNode.type, 'module', 'root is module');
   assert.strictEqual(tree.rootNode.firstChild.type, 'function_definition', 'first child is a function');
+}
+
+async function testTaintSymbols() {
+  const { parse } = require('../scripts/lib/taint/parser');
+  const { buildFileIR } = require('../scripts/lib/taint/ir');
+  const { buildSymbolTable } = require('../scripts/lib/taint/symbols');
+
+  const dbIr = buildFileIR(await parse('def run_query(sql):\n    cur.execute(sql)\n'), 'db.py');
+  const viewsIr = buildFileIR(await parse('from db import run_query\ndef v():\n    run_query(request.args["q"])\n'), 'views.py');
+  const table = buildSymbolTable([dbIr, viewsIr]);
+
+  assert(table.functionByQual.has('db.run_query'), 'function indexed by qualname');
+  const resolved = table.resolveImported('views.py', 'run_query');
+  assert(resolved && resolved.qualname === 'db.run_query', 'import resolves across files');
 }
 
 function testEngineMatching() {
