@@ -22,6 +22,7 @@ async function run() {
   await testTaintParser();
   testTaintCatalogs();
   await testTaintIR();
+  await testTaintIntraprocedural();
   testUnsupportedStackLowersConfidence();
   testNoRecognizedStackLowersConfidence();
   testMonorepoBlindSpotDetected();
@@ -77,6 +78,23 @@ async function testTaintIR() {
   assert(fn.decorators.some((d) => d.includes('app.route')), 'route decorator captured');
   assert(fn.assignments.some((a) => a.targets.includes('q')), 'assignment q captured');
   assert(fn.calls.some((c) => c.calleeDotted.endsWith('execute')), 'execute call captured');
+}
+
+async function testTaintIntraprocedural() {
+  const { parse } = require('../scripts/lib/taint/parser');
+  const { buildFileIR } = require('../scripts/lib/taint/ir');
+  const { analyzeFunctionIntra } = require('../scripts/lib/taint/engine');
+
+  const vuln = ['def profile():', '    q = request.args["id"]', '    cur.execute(q)'].join('\n');
+  let ir = buildFileIR(await parse(vuln), 'views.py');
+  let res = analyzeFunctionIntra(ir.functions[0], 'views.py');
+  assert.strictEqual(res.sinkHits.length, 1, 'one tainted sink hit');
+  assert.strictEqual(res.sinkHits[0].sinkId, 'TAINT-SQLI');
+
+  const safe = ['def profile():', '    q = int(request.args["id"])', '    cur.execute(q)'].join('\n');
+  ir = buildFileIR(await parse(safe), 'views.py');
+  res = analyzeFunctionIntra(ir.functions[0], 'views.py');
+  assert.strictEqual(res.sinkHits.length, 0, 'sanitized value is not a sink hit');
 }
 
 function testUnsupportedStackLowersConfidence() {
