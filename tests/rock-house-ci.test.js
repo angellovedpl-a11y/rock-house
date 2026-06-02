@@ -62,6 +62,8 @@ async function run() {
   testMissingPathErrors();
   testMissingConfigErrors();
   testInvalidConfigErrors();
+  await testTaintBlindEdgeLowersConfidence();
+  await testTaintTraceRendering();
   console.log('rock-house-ci tests passed');
 }
 
@@ -1530,4 +1532,39 @@ function closeServer(server) {
       else resolve();
     });
   });
+}
+
+async function testTaintBlindEdgeLowersConfidence() {
+  const fixture = makeTempProject('rock-house-taint-blind-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  // Tainted value passes into an unresolved (dynamic) call before any sink.
+  writeFile(fixture, 'app.py', [
+    'from flask import request',
+    'def v():',
+    '    x = request.args["id"]',
+    '    mystery_helper(x)'
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-taint-blind-${Date.now()}.json`);
+  runScanner(fixture, output, 'bronze');
+  const report = readJson(output);
+  assert(report.coverage.taint.ran === true, 'taint ran');
+  assert(report.coverage.taint.blindEdges >= 1, 'blind edge recorded for the unresolved call');
+  assert.notStrictEqual(report.confidence, 'Alta', 'blind edge means confidence is not Alta');
+}
+
+async function testTaintTraceRendering() {
+  const fixture = makeTempProject('rock-house-taint-md-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  writeFile(fixture, 'app.py', [
+    'from flask import request',
+    'def v():',
+    '    q = request.args["id"]',
+    '    cur.execute(q)'
+  ].join('\n'));
+  const output = path.join(fixture, 'r.json');
+  const markdownOutput = path.join(fixture, 's.md');
+  runScanner(fixture, output, 'bronze', { markdownOutput });
+  const md = fs.readFileSync(markdownOutput, 'utf8');
+  assert(md.includes('Fluxo'), 'markdown shows the taint flow description');
 }

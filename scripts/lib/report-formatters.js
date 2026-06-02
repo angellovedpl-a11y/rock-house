@@ -139,7 +139,10 @@ function toSarif(report) {
             recommendation: finding.recommendation,
             fixBefore: finding.fixPack?.before || '',
             fixAfter: finding.fixPack?.after || '',
-            fixCommand: finding.fixPack?.command || ''
+            fixCommand: finding.fixPack?.command || '',
+            taintTrace: Array.isArray(finding.taintTrace)
+              ? finding.taintTrace.map((h) => `${h.text} (${h.file}:${h.line})`)
+              : []
           }
         }))
       }
@@ -176,6 +179,9 @@ function fixPacksSection(items) {
     const fp = f.fixPack;
     const lines = [
       `### [${f.severity}] ${f.checkId} — ${escapeMd(f.rule?.title || f.description)}  (\`${f.file}:${f.line}\`)`,
+      Array.isArray(f.taintTrace) && f.taintTrace.length
+        ? `**Fluxo:** ${escapeMd(f.taintTrace.map((h) => `${h.text} (${h.file}:${h.line})`).join(' → '))}`
+        : '',
       fp.why ? `**Por que:** ${escapeMd(fp.why)}` : '',
       fp.before ? `**Antes:** \`${escapeMd(fp.before)}\`` : '',
       fp.after ? `**Depois:** \`${escapeMd(fp.after)}\`` : '',
