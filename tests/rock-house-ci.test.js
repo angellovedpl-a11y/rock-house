@@ -1573,6 +1573,9 @@ async function testTaintTraceRendering() {
 async function testTaintUnavailableFallsBackToRegex() {
   const fixture = makeTempProject('rock-house-taint-na-');
   writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  // Intentionally minimal: only PY-DEBUG (a regex rule) is asserted, so the
+  // fixture omits `from flask import request` — the SQLi lines just give the
+  // taint engine something to (fail to) analyze when the parser is unavailable.
   writeFile(fixture, 'app.py', [
     'app.run(debug=True)',           // regex rule PY-DEBUG must still fire
     'q = request.args["id"]',
@@ -1584,6 +1587,7 @@ async function testTaintUnavailableFallsBackToRegex() {
   const result = runScanner(fixture, output, 'prata', { env: { ROCKHOUSE_PYTHON_WASM: path.join(fixture, 'nope.wasm') } });
   const report = readJson(output);
   assert(report.findings.some((f) => f.checkId === 'PY-DEBUG'), 'regex rules still run when taint is unavailable');
-  assert(report.coverage.taint.ran === false || report.coverage.taint.blindEdges >= 1, 'taint reported unavailable, not silently clean');
+  assert.strictEqual(report.coverage.taint.ran, false, 'taint did not run (parser unavailable)');
+  assert(report.coverage.taint.blindEdges >= 1, 'degradation recorded as a blind edge');
   assert.notStrictEqual(result.status, 0, 'still blocks on the regex findings (Bronze cert < prata gate)');
 }
