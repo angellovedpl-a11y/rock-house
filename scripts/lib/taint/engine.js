@@ -345,6 +345,46 @@ function analyzeProjectTaint(fileIRs, symbols) {
   return { paths, blindEdges };
 }
 
+// Per-function return-taint: returnIsSource (source-driven, unconditional) and the
+// param indices whose taint reaches the return. Composed to a bounded fixpoint so a
+// function that returns the value of a resolved call to a return-tainted function is
+// itself return-tainted. Unresolved/external return-producers do NOT set returnIsSource
+// here — exprIsTainted falls back to its conservative arg-flow for those.
+function buildReturnTaint(fileIRs, symbols) {
+  const summary = new Map();  // qualname -> { returnIsSource, paramReturnIdx:Set<int> }
+
+  for (const ir of fileIRs) {
+    for (const fn of ir.functions) {
+      const base = analyzeFunctionIntra(fn, ir.path, fn.params || []);
+      const paramReturnIdx = new Set();
+      (fn.params || []).forEach((p, i) => { if (base.summary.paramTaintsReturn.has(p)) paramReturnIdx.add(i); });
+      summary.set(fn.qualname, { returnIsSource: base.summary.returnIsSource, paramReturnIdx });
+    }
+  }
+
+  // Fixpoint: a()'s return inherits return-taint from a resolved callee it returns.
+  for (let iter = 0; iter < MAX_DEPTH; iter++) {
+    let changed = false;
+    for (const ir of fileIRs) {
+      for (const fn of ir.functions) {
+        const s = summary.get(fn.qualname);
+        if (s.returnIsSource) continue;
+        for (const r of fn.returns) {
+          if (!r.value || !r.value.isCall) continue;
+          const shim = { calleeDotted: r.value.callee || '', calleeLast: (r.value.callee || '').split('.').pop(), args: r.value.args || [] };
+          const res = resolveCall(shim, ir, symbols);
+          if (res.kind !== 'function') continue;
+          if (summary.get(res.fn.qualname) && summary.get(res.fn.qualname).returnIsSource) {
+            s.returnIsSource = true; changed = true;
+          }
+        }
+      }
+    }
+    if (!changed) break;
+  }
+  return summary;
+}
+
 // Build a source→…→sink hop trace, expanding intermediate resolved hops up to MAX_DEPTH
 // so deep chains (profile → wrapper → run_query → execute) point at the TRUE sink file/line.
 function buildHops(callee, fileOfFn, fnByQual, flowsOf, entryParam, callerIr, call, argExpr, origin) {
@@ -391,4 +431,4 @@ function buildHops(callee, fileOfFn, fnByQual, flowsOf, entryParam, callerIr, ca
   return hops;
 }
 
-module.exports = { analyzeFunctionIntra, exprIsTainted, exprIsSource, analyzeProjectTaint, computeParamCallFlows };
+module.exports = { analyzeFunctionIntra, exprIsTainted, exprIsSource, analyzeProjectTaint, computeParamCallFlows, buildReturnTaint };

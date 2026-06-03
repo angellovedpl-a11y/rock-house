@@ -29,6 +29,7 @@ async function run() {
   await testTaintCallgraph();
   await testTaintInterprocedural();
   await testTaintReturnSummary();
+  await testBuildReturnTaint();
   testUnsupportedStackLowersConfidence();
   testNoRecognizedStackLowersConfidence();
   testMonorepoBlindSpotDetected();
@@ -1480,6 +1481,21 @@ async function testTaintReturnSummary() {
   ir = buildFileIR(await parse('def c():\n    return 42\n'), 'h.py');
   res = analyzeFunctionIntra(ir.functions[0], 'h.py');
   assert.strictEqual(res.summary.returnIsSource, false, 'constant return is clean');
+}
+
+async function testBuildReturnTaint() {
+  const { parse } = require('../scripts/lib/taint/parser');
+  const { buildFileIR } = require('../scripts/lib/taint/ir');
+  const { buildSymbolTable } = require('../scripts/lib/taint/symbols');
+  const { buildReturnTaint } = require('../scripts/lib/taint/engine');
+
+  const hIr = buildFileIR(await parse('def get_q():\n    return request.args["x"]\n'), 'h.py');
+  const vIr = buildFileIR(await parse('from h import get_q\ndef a():\n    return get_q()\n'), 'v.py');
+  const symbols = buildSymbolTable([hIr, vIr]);
+  const rt = buildReturnTaint([hIr, vIr], symbols);
+
+  assert.strictEqual(rt.get('h.get_q').returnIsSource, true, 'direct source return');
+  assert.strictEqual(rt.get('v.a').returnIsSource, true, 'inherited through resolved call (fixpoint)');
 }
 
 async function testTaintSymbols() {
