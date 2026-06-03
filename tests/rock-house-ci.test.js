@@ -67,6 +67,8 @@ async function run() {
   await testTaintUnavailableFallsBackToRegex();
   await testTaintMultiHopChainIsFound();
   await testTaintUnavailableIsNotHighConfidence();
+  await testTaintUnresolvedTailInChainIsBlindEdge();
+  await testTaintOverDepthChainIsNotSilentlyClean();
   console.log('rock-house-ci tests passed');
 }
 
@@ -1467,6 +1469,66 @@ async function testTaintSymbols() {
   assert(table.functionByQual.has('db.run_query'), 'function indexed by qualname');
   const resolved = table.resolveImported('views.py', 'run_query');
   assert(resolved && resolved.qualname === 'db.run_query', 'import resolves across files');
+}
+
+// HOLE 1: a param flows into an UNRESOLVED call deep inside a RESOLVED chain.
+// run_query's summary stays "clean" (its body only calls an external/unresolved lib),
+// so profile->run_query must NOT be reported as silently clean: the unresolved tail is
+// a blind edge that the engine has to surface and that must lower confidence.
+async function testTaintUnresolvedTailInChainIsBlindEdge() {
+  const fixture = makeTempProject('rock-house-taint-unrestail-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  writeFile(fixture, 'db.py', [
+    'def run_query(sql):',
+    '    external_lib.runit(sql)'   // unresolved — taint vanishes here
+  ].join('\n'));
+  writeFile(fixture, 'views.py', [
+    'from flask import request',
+    'from db import run_query',
+    'def profile():',
+    '    uid = request.args["id"]',
+    '    run_query(uid)'
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-taint-unrestail-${Date.now()}.json`);
+  runScanner(fixture, output, 'bronze');
+  const report = readJson(output);
+  assert(report.coverage.taint.ran === true, 'taint ran');
+  // Honest-degradation: the unresolved tail must surface as a blind edge and drop confidence.
+  assert(report.coverage.taint.blindEdges >= 1, 'unresolved tail inside a resolved chain is a blind edge');
+  assert.notStrictEqual(report.confidence, 'Alta', 'unresolved tail means confidence is not Alta');
+}
+
+// HOLE 2: a fully-RESOLVED chain longer than MAX_DEPTH must not be silently clean.
+// The summary-composition fixpoint is bounded; a chain deeper than it can converge on
+// must degrade honestly (a found SQLi OR a blind edge), never a clean Alta.
+async function testTaintOverDepthChainIsNotSilentlyClean() {
+  const fixture = makeTempProject('rock-house-taint-overdepth-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  const N = 12; // > MAX_DEPTH (8)
+  const lines = [
+    'from flask import request',
+    'def f0():',
+    '    seed = request.args["id"]',
+    '    f1(seed)'
+  ];
+  for (let i = 1; i < N - 1; i++) {
+    lines.push(`def f${i}(x${i}):`);
+    lines.push(`    f${i + 1}(x${i})`);
+  }
+  // The tail does the actual sink.
+  lines.push(`def f${N - 1}(x${N - 1}):`);
+  lines.push(`    cur.execute(x${N - 1})`);
+  writeFile(fixture, 'chain.py', lines.join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-taint-overdepth-${Date.now()}.json`);
+  runScanner(fixture, output, 'bronze');
+  const report = readJson(output);
+  assert(report.coverage.taint.ran === true, 'taint ran');
+  const found = (report.findings || []).some((f) => f.checkId === 'TAINT-SQLI');
+  const blind = report.coverage.taint.blindEdges >= 1;
+  assert(found || blind, 'over-depth chain must be found OR raise a blind edge, never silent');
+  assert.notStrictEqual(report.confidence, 'Alta', 'over-depth chain means confidence is not Alta');
 }
 
 function testEngineMatching() {

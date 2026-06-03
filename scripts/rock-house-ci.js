@@ -101,7 +101,7 @@ async function main() {
   const observabilityReport = evaluateObservability({ targetRoot, files, packageJsonPath, observability, fail });
 
   scanFiles(files);
-  const taintResult = await analyzeProject({ files, targetRoot, addFinding, gates, addUnknown });
+  const taintResult = await analyzeProject({ files, targetRoot, addFinding, addUnknown });
   scanPackageJson(packageJsonPath, hasPackageJson);
   scanLockfile(hasPackageJson);
   scanPnpmWorkspace(targetRoot, hasPackageJson, addFinding);

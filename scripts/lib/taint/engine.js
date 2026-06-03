@@ -30,6 +30,10 @@ function analyzeFunctionIntra(fn, file, seedParams = []) {
   const sinkHits = [];
   const paramReachesSink = new Map();
   const paramTaintsReturn = new Set();
+  // Params that flow (directly here, or transitively via the fixpoint) into an
+  // UNRESOLVED call — an honest blind edge the engine cannot follow. Seeded empty
+  // by the intra pass; populated from blindFlows + composed through the fixpoint.
+  const paramReachesBlind = new Set();
 
   // Deduplicate calls by (line, calleeDotted) — ir.js may record nested calls twice.
   const seenCallKeys = new Set();
@@ -72,7 +76,7 @@ function analyzeFunctionIntra(fn, file, seedParams = []) {
     }
   }
 
-  return { sinkHits, summary: { paramReachesSink, paramTaintsReturn } };
+  return { sinkHits, summary: { paramReachesSink, paramTaintsReturn, paramReachesBlind } };
 }
 
 const { resolveCall } = require('./callgraph');
@@ -95,8 +99,11 @@ function sevForSink(sinkId) {
 // Returns:
 //   resolvedFlows: [{ param, argIndex, calleeQual, calleeName, callLine, argText, origin }]
 //       — a seed param flows into a RESOLVED repo function's argument at argIndex.
-//   blindFlows:    [{ callLine, calleeDotted }]
+//   blindFlows:    [{ callLine, calleeDotted, params }]
 //       — a tainted arg (from a source or a seed param) flows into an UNRESOLVED call.
+//         `params` is the set of THIS function's seed params whose taint reaches that
+//         unresolved call, so the fixpoint can compose "param reaches a blind edge"
+//         transitively (and the emit pass can raise an honest blind edge).
 function computeParamCallFlows(fn, file, symbols) {
   const seedParams = fn.params || [];
   const seedSet = new Set(seedParams);
@@ -160,7 +167,11 @@ function computeParamCallFlows(fn, file, symbols) {
       const resolution = resolveCall(call, file, symbols);
       if (resolution.kind === 'external') continue; // modeled sink/sanitizer — intra pass owns it
       if (resolution.kind === 'unresolved') {
-        blindFlows.push({ callLine: call.line, calleeDotted: call.calleeDotted });
+        // Which of THIS function's params taint any argument of the unresolved call?
+        // Those params reach a blind edge (directly). The fixpoint composes the rest.
+        const blindParams = new Set();
+        for (const arg of args) for (const p of provenanceOf(arg)) blindParams.add(p);
+        blindFlows.push({ callLine: call.line, calleeDotted: call.calleeDotted, params: [...blindParams] });
         continue;
       }
       // resolution.kind === 'function' — a resolved repo call. Record a flow for every
@@ -208,7 +219,12 @@ function analyzeProjectTaint(fileIRs, symbols) {
     for (const fn of ir.functions) {
       const res = analyzeFunctionIntra(fn, ir.path, fn.params);
       summaryOf.set(fn.qualname, res.summary);
-      flowsOf.set(fn.qualname, computeParamCallFlows(fn, ir, symbols));
+      const flows = computeParamCallFlows(fn, ir, symbols);
+      flowsOf.set(fn.qualname, flows);
+      // Seed "param reaches a blind edge" from this function's DIRECT unresolved-tail flows.
+      for (const bf of flows.blindFlows) {
+        for (const p of bf.params || []) res.summary.paramReachesBlind.add(p);
+      }
     }
   }
 
@@ -216,6 +232,11 @@ function analyzeProjectTaint(fileIRs, symbols) {
   //    reaches a sink if it flows into a resolved callee G at index i AND G's param[i]
   //    reaches a sink (transitively). Monotonic + finite + "no change" stop ⇒ terminates
   //    even on cyclic / self-recursive call graphs.
+  //    The SAME fixpoint also composes "param reaches a blind edge": if p flows into a
+  //    resolved callee G at index i and G's param[i] reaches a blind edge, so does p.
+  //    If the loop hits the iteration cap while still making changes, the reachability
+  //    data is INCOMPLETE (non-converged) — recorded so the emit pass degrades honestly.
+  let converged = false;
   for (let iter = 0; iter < MAX_DEPTH; iter++) {
     let changed = false;
     for (const [qual, flows] of flowsOf) {
@@ -225,17 +246,28 @@ function analyzeProjectTaint(fileIRs, symbols) {
         if (!calleeSummary) continue;
         const callee = fnByQual.get(flow.calleeQual);
         const calleeParam = callee && (callee.params || [])[flow.argIndex];
-        if (!calleeParam || !calleeSummary.paramReachesSink.has(calleeParam)) continue;
-        const sinkId = calleeSummary.paramReachesSink.get(calleeParam)[0];
-        const existing = summary.paramReachesSink.get(flow.param) || [];
-        if (!existing.includes(sinkId)) {
-          if (!summary.paramReachesSink.has(flow.param)) summary.paramReachesSink.set(flow.param, []);
-          summary.paramReachesSink.get(flow.param).push(sinkId);
+        if (!calleeParam) continue;
+        // Compose sink-reachability.
+        if (calleeSummary.paramReachesSink.has(calleeParam)) {
+          const sinkId = calleeSummary.paramReachesSink.get(calleeParam)[0];
+          const existing = summary.paramReachesSink.get(flow.param) || [];
+          if (!existing.includes(sinkId)) {
+            if (!summary.paramReachesSink.has(flow.param)) summary.paramReachesSink.set(flow.param, []);
+            summary.paramReachesSink.get(flow.param).push(sinkId);
+            changed = true;
+          }
+        }
+        // Compose blind-edge reachability (HOLE 1): an unresolved tail deep in a
+        // resolved chain propagates "reaches a blind edge" up to the entry param.
+        if (calleeSummary.paramReachesBlind.has(calleeParam) && !summary.paramReachesBlind.has(flow.param)) {
+          summary.paramReachesBlind.add(flow.param);
           changed = true;
         }
       }
     }
-    if (!changed) break; // fixpoint reached
+    if (!changed) { converged = true; break; } // fixpoint reached — data is complete
+    // else: still propagating. If this was the last allowed pass, we exit the loop
+    // with converged === false → reachability is INCOMPLETE (over-depth, HOLE 2).
   }
 
   // 3) Emit cross-file paths + honest blind edges by walking each function once more.
@@ -278,7 +310,21 @@ function analyzeProjectTaint(fileIRs, symbols) {
             blindEdges += 1;
             continue;
           }
-          if (!summary.paramReachesSink.has(param)) continue; // resolved & known NOT to reach a sink
+          // HOLE 1: the tainted arg maps to a param that flows into an UNRESOLVED call
+          // (directly or transitively). We can't follow past that point → blind edge.
+          // (If it ALSO reaches a known sink we fall through and emit the path instead.)
+          if (summary.paramReachesBlind.has(param) && !summary.paramReachesSink.has(param)) {
+            blindEdges += 1;
+            continue;
+          }
+          if (!summary.paramReachesSink.has(param)) {
+            // Resolved & (within the bound) NOT known to reach a sink. If the fixpoint
+            // did NOT converge (HOLE 2: chain deeper than MAX_DEPTH), this "clean"
+            // verdict is untrustworthy → degrade honestly to a blind edge rather than
+            // silently report safe. Converged runs are unaffected.
+            if (!converged) blindEdges += 1;
+            continue;
+          }
           const sinkId = summary.paramReachesSink.get(param)[0];
           const sev = sevForSink(sinkId);
           const argExpr = call.args[taintedArgIdx];
@@ -312,9 +358,11 @@ function buildHops(callee, fileOfFn, fnByQual, flowsOf, entryParam, callerIr, ca
     const curFn = fnByQual.get(curQual);
     const curFile = fileOfFn.get(curQual);
     if (!curFn || !curFile) break;
-    // Does this function hit a modeled sink directly on curParam? Detect via a fresh intra pass.
+    // Does this function hit a modeled sink directly on curParam? Detect via a fresh intra
+    // pass seeded with ONLY curParam, so every recorded sinkHit is reached via the tracked
+    // param. Pick the first such hit (sinkHits are in source order) as the trace endpoint.
     const intra = analyzeFunctionIntra(curFn, curFile.path, [curParam]);
-    const directHit = intra.sinkHits.find((h) => true);
+    const directHit = intra.sinkHits[0];
     // Find the next resolved hop that carries curParam onward.
     const flows = flowsOf.get(curQual);
     const next = flows && flows.resolvedFlows.find((f) => f.param === curParam);
