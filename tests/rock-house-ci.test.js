@@ -28,6 +28,7 @@ async function run() {
   await testTaintSymbols();
   await testTaintCallgraph();
   await testTaintInterprocedural();
+  await testTaintReturnSummary();
   testUnsupportedStackLowersConfidence();
   testNoRecognizedStackLowersConfidence();
   testMonorepoBlindSpotDetected();
@@ -1457,6 +1458,28 @@ async function testTaintInterprocedural() {
   assert(t, 'cross-file TAINT-SQLI found');
   const files = (t.taintTrace || []).map((h) => h.file);
   assert(files.includes('views.py') && files.includes('db.py'), 'trace spans both files');
+}
+
+async function testTaintReturnSummary() {
+  const { parse } = require('../scripts/lib/taint/parser');
+  const { buildFileIR } = require('../scripts/lib/taint/ir');
+  const { analyzeFunctionIntra } = require('../scripts/lib/taint/engine');
+
+  // returns a source directly → returnIsSource true, no param needed
+  let ir = buildFileIR(await parse('def get_q():\n    return request.args["x"]\n'), 'h.py');
+  let res = analyzeFunctionIntra(ir.functions[0], 'h.py');
+  assert.strictEqual(res.summary.returnIsSource, true, 'source-returning helper flagged');
+
+  // returns its param → paramTaintsReturn has it, returnIsSource false
+  ir = buildFileIR(await parse('def wrap(x):\n    return x\n'), 'h.py');
+  res = analyzeFunctionIntra(ir.functions[0], 'h.py', ['x']);
+  assert.strictEqual(res.summary.returnIsSource, false, 'param passthrough is not a source');
+  assert(res.summary.paramTaintsReturn.has('x'), 'param flow to return tracked');
+
+  // returns a constant → neither
+  ir = buildFileIR(await parse('def c():\n    return 42\n'), 'h.py');
+  res = analyzeFunctionIntra(ir.functions[0], 'h.py');
+  assert.strictEqual(res.summary.returnIsSource, false, 'constant return is clean');
 }
 
 async function testTaintSymbols() {

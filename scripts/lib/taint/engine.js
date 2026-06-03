@@ -27,6 +27,7 @@ function sqlIsParameterized(call, taintedVars) {
 // seedParams marks params as tainted (used by inter-procedural propagation later; empty for pure intra-proc).
 function analyzeFunctionIntra(fn, file, seedParams = []) {
   const tainted = new Set(seedParams);
+  const sourceTainted = new Set(); // tainted IGNORING params (source-driven only) → returnIsSource
   const sinkHits = [];
   const paramReachesSink = new Map();
   const paramTaintsReturn = new Set();
@@ -53,6 +54,8 @@ function analyzeFunctionIntra(fn, file, seedParams = []) {
     if (ev.kind === 'assign') {
       const t = exprIsTainted(ev.a.value, tainted);
       for (const tgt of ev.a.targets) { if (t) tainted.add(tgt); else tainted.delete(tgt); }
+      const ts = exprIsTainted(ev.a.value, sourceTainted);
+      for (const tgt of ev.a.targets) { if (ts) sourceTainted.add(tgt); else sourceTainted.delete(tgt); }
     } else {
       const call = ev.c;
       const sink = sinkFor(call.calleeDotted);
@@ -70,13 +73,16 @@ function analyzeFunctionIntra(fn, file, seedParams = []) {
     }
   }
 
+  let returnIsSource = false;
   for (const r of fn.returns) {
-    if (r.value && exprIsTainted(r.value, tainted)) {
+    if (!r.value) continue;
+    if (exprIsTainted(r.value, tainted)) {
       for (const p of seedParams) if ((r.value.reads || []).includes(p)) paramTaintsReturn.add(p);
     }
+    if (exprIsTainted(r.value, sourceTainted)) returnIsSource = true;
   }
 
-  return { sinkHits, summary: { paramReachesSink, paramTaintsReturn, paramReachesBlind } };
+  return { sinkHits, summary: { paramReachesSink, paramTaintsReturn, paramReachesBlind, returnIsSource } };
 }
 
 const { resolveCall } = require('./callgraph');
