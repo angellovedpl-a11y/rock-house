@@ -30,6 +30,7 @@ async function run() {
   await testTaintInterprocedural();
   await testTaintReturnSummary();
   await testBuildReturnTaint();
+  await testReturnTaintCtx();
   testUnsupportedStackLowersConfidence();
   testNoRecognizedStackLowersConfidence();
   testMonorepoBlindSpotDetected();
@@ -1496,6 +1497,29 @@ async function testBuildReturnTaint() {
 
   assert.strictEqual(rt.get('h.get_q').returnIsSource, true, 'direct source return');
   assert.strictEqual(rt.get('v.a').returnIsSource, true, 'inherited through resolved call (fixpoint)');
+}
+
+async function testReturnTaintCtx() {
+  const { parse } = require('../scripts/lib/taint/parser');
+  const { buildFileIR } = require('../scripts/lib/taint/ir');
+  const { buildSymbolTable } = require('../scripts/lib/taint/symbols');
+  const { analyzeFunctionIntra, buildReturnTaint, makeReturnTaintCtx } = require('../scripts/lib/taint/engine');
+
+  // get_q() returns a source; profile assigns it and sinks it — must be a hit WITH ctx.
+  const hIr = buildFileIR(await parse('def get_q():\n    return request.args["x"]\n'), 'h.py');
+  const vIr = buildFileIR(await parse('from h import get_q\ndef profile():\n    q = get_q()\n    cur.execute(q)\n'), 'v.py');
+  const symbols = buildSymbolTable([hIr, vIr]);
+  const rt = buildReturnTaint([hIr, vIr], symbols);
+  const ctx = makeReturnTaintCtx(rt, symbols, vIr);
+
+  const profile = vIr.functions.find((f) => f.name === 'profile');
+  const withCtx = analyzeFunctionIntra(profile, 'v.py', [], ctx);
+  assert.strictEqual(withCtx.sinkHits.length, 1, 'return-source helper makes the sink a hit');
+  assert.strictEqual(withCtx.sinkHits[0].sinkId, 'TAINT-SQLI');
+
+  // Without ctx, today's behavior: the no-arg call is not a source → no hit (proves no regression of the default).
+  const noCtx = analyzeFunctionIntra(profile, 'v.py', []);
+  assert.strictEqual(noCtx.sinkHits.length, 0, 'no ctx = unchanged conservative default');
 }
 
 async function testTaintSymbols() {

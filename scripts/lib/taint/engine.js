@@ -7,13 +7,19 @@ function exprIsSource(expr) {
 }
 
 // Does evaluating this expression yield taint, given the current tainted-var set?
-function exprIsTainted(expr, taintedVars) {
+function exprIsTainted(expr, taintedVars, ctx) {
   if (!expr) return false;
   if (exprIsSource(expr)) return true;
   if (expr.isCall) {
     const last = (expr.callee || '').split('.').pop();
-    if (isSanitizer(last)) return false;               // sanitized — check BEFORE reads
-    return (expr.args || []).some((a) => exprIsTainted(a, taintedVars)); // taint flows through non-sanitizer calls
+    if (isSanitizer(last)) return false;                 // sanitized — check BEFORE reads
+    if (ctx && ctx.callReturn) {
+      const verdict = ctx.callReturn(expr, taintedVars, ctx);
+      if (verdict === true) return true;                 // resolved callee returns taint
+      if (verdict === 'clean') return false;             // resolved & provably not return-tainting
+      // 'unknown' (unresolved/external) → fall through to conservative arg-flow
+    }
+    return (expr.args || []).some((a) => exprIsTainted(a, taintedVars, ctx)); // taint flows through calls
   }
   return (expr.reads || []).some((id) => taintedVars.has(id));
 }
@@ -25,7 +31,7 @@ function sqlIsParameterized(call, taintedVars) {
 }
 
 // seedParams marks params as tainted (used by inter-procedural propagation later; empty for pure intra-proc).
-function analyzeFunctionIntra(fn, file, seedParams = []) {
+function analyzeFunctionIntra(fn, file, seedParams = [], ctx = null) {
   const tainted = new Set(seedParams);
   const sourceTainted = new Set(); // tainted IGNORING params (source-driven only) → returnIsSource
   const sinkHits = [];
@@ -52,15 +58,15 @@ function analyzeFunctionIntra(fn, file, seedParams = []) {
 
   for (const ev of events) {
     if (ev.kind === 'assign') {
-      const t = exprIsTainted(ev.a.value, tainted);
+      const t = exprIsTainted(ev.a.value, tainted, ctx);
       for (const tgt of ev.a.targets) { if (t) tainted.add(tgt); else tainted.delete(tgt); }
-      const ts = exprIsTainted(ev.a.value, sourceTainted);
+      const ts = exprIsTainted(ev.a.value, sourceTainted, ctx);
       for (const tgt of ev.a.targets) { if (ts) sourceTainted.add(tgt); else sourceTainted.delete(tgt); }
     } else {
       const call = ev.c;
       const sink = sinkFor(call.calleeDotted);
       if (!sink) continue;
-      let hit = (call.args || []).some((arg) => exprIsTainted(arg, tainted));
+      let hit = (call.args || []).some((arg) => exprIsTainted(arg, tainted, ctx));
       if (hit && sink.id === 'TAINT-SQLI' && sqlIsParameterized(call, tainted)) hit = false;
       if (!hit) continue;
       sinkHits.push({ sinkId: sink.id, severity: sink.severity, cls: sink.cls, file, line: call.line, calleeDotted: call.calleeDotted });
@@ -76,10 +82,10 @@ function analyzeFunctionIntra(fn, file, seedParams = []) {
   let returnIsSource = false;
   for (const r of fn.returns) {
     if (!r.value) continue;
-    if (exprIsTainted(r.value, tainted)) {
+    if (exprIsTainted(r.value, tainted, ctx)) {
       for (const p of seedParams) if ((r.value.reads || []).includes(p)) paramTaintsReturn.add(p);
     }
-    if (exprIsTainted(r.value, sourceTainted)) returnIsSource = true;
+    if (exprIsTainted(r.value, sourceTainted, ctx)) returnIsSource = true;
   }
 
   return { sinkHits, summary: { paramReachesSink, paramTaintsReturn, paramReachesBlind, returnIsSource } };
@@ -385,6 +391,27 @@ function buildReturnTaint(fileIRs, symbols) {
   return summary;
 }
 
+// Build the resolver context exprIsTainted uses to ask "does this call return taint?".
+// `ir` is the file the expression being analyzed lives in (needed to resolve the call).
+function makeReturnTaintCtx(returnSummary, symbols, ir) {
+  return {
+    ir, symbols, returnSummary,
+    callReturn(expr, taintedVars, ctx) {
+      const shim = { calleeDotted: expr.callee || '', calleeLast: (expr.callee || '').split('.').pop(), args: expr.args || [] };
+      const res = resolveCall(shim, ctx.ir, ctx.symbols);
+      if (res.kind !== 'function') return 'unknown';      // external/unresolved → conservative arg-flow
+      const s = ctx.returnSummary.get(res.fn.qualname);
+      if (!s) return 'unknown';
+      if (s.returnIsSource) return true;
+      // Resolved: return is tainted iff a tainted arg is bound to a param that flows to the return.
+      for (const i of s.paramReturnIdx) {
+        if (expr.args[i] && exprIsTainted(expr.args[i], taintedVars, ctx)) return true;
+      }
+      return 'clean';                                     // resolved & precisely not return-tainting
+    }
+  };
+}
+
 // Build a source→…→sink hop trace, expanding intermediate resolved hops up to MAX_DEPTH
 // so deep chains (profile → wrapper → run_query → execute) point at the TRUE sink file/line.
 function buildHops(callee, fileOfFn, fnByQual, flowsOf, entryParam, callerIr, call, argExpr, origin) {
@@ -431,4 +458,4 @@ function buildHops(callee, fileOfFn, fnByQual, flowsOf, entryParam, callerIr, ca
   return hops;
 }
 
-module.exports = { analyzeFunctionIntra, exprIsTainted, exprIsSource, analyzeProjectTaint, computeParamCallFlows, buildReturnTaint };
+module.exports = { analyzeFunctionIntra, exprIsTainted, exprIsSource, analyzeProjectTaint, computeParamCallFlows, buildReturnTaint, makeReturnTaintCtx };
