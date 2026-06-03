@@ -626,6 +626,269 @@ git commit -m "chore: track skill-router research, drop junk file, fix whitespac
 
 ---
 
+### Task 7: `returnReachesBlind` — unknown return is a blind edge, not clean (Codex Ressalva 1)
+
+A function whose return is the value of an **unresolved/external (non-sanitizer) call** has an
+UNKNOWN return-taint. Today `callReturn` would answer `'clean'` for it (resolved callee, no
+source, no param-return), so `def h(): return unknown(); q = h(); cur.execute(q)` is silently
+clean. Honest behavior: that sink becomes a **blind edge** (lowers confidence), never a clean.
+
+Depends on Tasks 2-4 (must be done after `buildReturnTaint`, `makeReturnTaintCtx`, and the
+`index.js` wiring exist).
+
+**Files:**
+- Modify: `scripts/lib/taint/engine.js` (`buildReturnTaint`, `makeReturnTaintCtx`, `analyzeFunctionIntra`)
+- Modify: `scripts/lib/taint/index.js` (consume the new `blindEdges` from the intra pass)
+- Test: `tests/rock-house-ci.test.js`
+
+- [ ] **Step 1: Write the failing test**
+
+Add and register `await testReturnReachesBlindIsBlindEdge();`:
+
+```javascript
+async function testReturnReachesBlindIsBlindEdge() {
+  const fixture = makeTempProject('rock-house-taint-retblind-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  writeFile(fixture, 'helpers.py', [
+    'def h():',
+    '    return external_lib.fetch()'   // unresolved/external return — taint UNKNOWN
+  ].join('\n'));
+  writeFile(fixture, 'views.py', [
+    'from helpers import h',
+    'def profile():',
+    '    q = h()',
+    '    cur.execute(q)'
+  ].join('\n'));
+  const output = path.join(os.tmpdir(), `rock-house-taint-retblind-${Date.now()}.json`);
+  runScanner(fixture, output, 'bronze');
+  const report = readJson(output);
+  assert(report.coverage.taint.ran === true, 'taint ran');
+  assert(report.coverage.taint.blindEdges >= 1, 'unknown return reaching a sink is a blind edge');
+  assert.notStrictEqual(report.confidence, 'Alta', 'unknown-return sink means confidence is not Alta');
+  const hard = (report.findings || []).some((f) => f.checkId === 'TAINT-SQLI');
+  assert.strictEqual(hard, false, 'unknown return is NOT a hard finding — it is a blind edge, honestly');
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `node tests/rock-house-ci.test.js`
+Expected: FAIL — `blindEdges` is `0` (the silent-clean hole Codex flagged).
+
+- [ ] **Step 3: Compute `returnReachesBlind` in `buildReturnTaint`**
+
+In `scripts/lib/taint/engine.js`, inside `buildReturnTaint`, extend the per-function summary
+and the fixpoint. In the base summary loop, after computing `paramReturnIdx`, add:
+
+```javascript
+      // returnReachesBlind: a return value that is a NON-sanitizer call resolving to
+      // unresolved/external — we cannot know if its result is tainted.
+      let returnReachesBlind = false;
+      for (const r of fn.returns) {
+        const v = r.value;
+        if (!v || !v.isCall) continue;
+        const last = (v.callee || '').split('.').pop();
+        if (isSanitizer(last)) continue; // laundered → not blind
+        const shim = { calleeDotted: v.callee || '', calleeLast: last, args: v.args || [] };
+        const res = resolveCall(shim, ir, symbols);
+        if (res.kind === 'unresolved' || res.kind === 'external') { returnReachesBlind = true; break; }
+      }
+      summary.set(fn.qualname, { returnIsSource: base.summary.returnIsSource, paramReturnIdx, returnReachesBlind });
+```
+
+(Replace the existing `summary.set(...)` line from Task 2 with the one above. Add
+`const { isSourceExpr, sinkFor, isSanitizer } = require('./catalogs');` already exists at the
+top of engine.js — `isSanitizer` is in scope.)
+
+In the fixpoint loop, also propagate `returnReachesBlind` when a function returns a resolved
+callee that itself reaches blind. Inside the fixpoint's `for (const r of fn.returns)` block,
+after the `returnIsSource` propagation, add:
+
+```javascript
+          if (summary.get(res.fn.qualname) && summary.get(res.fn.qualname).returnReachesBlind && !s.returnReachesBlind) {
+            s.returnReachesBlind = true; changed = true;
+          }
+```
+
+- [ ] **Step 4: Add the `'blind'` verdict to `callReturn`**
+
+In `makeReturnTaintCtx.callReturn` (Task 3), insert the blind check BEFORE the final `'clean'`:
+
+```javascript
+      if (s.returnIsSource) return true;
+      for (const i of s.paramReturnIdx) {
+        if (expr.args[i] && exprIsTainted(expr.args[i], taintedVars, ctx)) return true;
+      }
+      if (s.returnReachesBlind) return 'blind';   // resolved, but its own return is UNKNOWN
+      return 'clean';
+```
+
+`exprIsTainted` must treat `'blind'` as NOT confirmed taint (so it does not become a hard
+finding). In `exprIsTainted`, the existing `if (verdict === true) return true;` and
+`if (verdict === 'clean') return false;` already leave `'blind'` to fall through to the
+conservative arg-flow — for a no-arg call that yields `false`, which is what we want
+(no hard finding). The blind-edge accounting happens in `analyzeFunctionIntra` (next step),
+not in `exprIsTainted`.
+
+- [ ] **Step 5: Track blind edges in `analyzeFunctionIntra`**
+
+In `analyzeFunctionIntra`, add blind tracking. After `const tainted = new Set(seedParams);`
+add:
+
+```javascript
+  let blindEdges = 0;
+  const blindTainted = new Set(); // vars assigned from a call whose return-taint is UNKNOWN
+```
+
+In the assign branch, after the existing `tainted`/`sourceTainted` updates, add:
+
+```javascript
+      if (ctx && ctx.callReturn && ev.a.value && ev.a.value.isCall) {
+        const verdict = ctx.callReturn(ev.a.value, tainted, ctx);
+        for (const tgt of ev.a.targets) { if (verdict === 'blind') blindTainted.add(tgt); else blindTainted.delete(tgt); }
+      }
+```
+
+In the sink branch, after the existing `if (!hit) continue;` is evaluated — replace that line
+so a blind-tainted arg into a sink counts as a blind edge instead of being silently dropped:
+
+```javascript
+      if (!hit) {
+        if ((call.args || []).some((arg) => (arg.reads || []).some((r) => blindTainted.has(r)))) blindEdges += 1;
+        continue;
+      }
+```
+
+Update the return statement to include `blindEdges`:
+
+```javascript
+  return { sinkHits, blindEdges, summary: { paramReachesSink, paramTaintsReturn, paramReachesBlind, returnIsSource } };
+```
+
+- [ ] **Step 6: Consume the intra blind edges in `index.js`**
+
+In `scripts/lib/taint/index.js`, in the same-function emission loop (the one wired in Task 4),
+after the `for (const hit of res.sinkHits) { ... }` block, add:
+
+```javascript
+      coverage.blindEdges += res.blindEdges || 0;
+```
+
+- [ ] **Step 7: Run test to verify it passes**
+
+Run: `node tests/rock-house-ci.test.js`
+Expected: PASS — the new test plus the whole suite green. Confirm `testTaintReturnSourceHelperIsFound`
+(Task 4) still passes: a return-**source** is still a hard finding; only return-**unknown** is a blind edge.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add scripts/lib/taint/engine.js scripts/lib/taint/index.js tests/rock-house-ci.test.js
+git commit -m "feat(taint): unknown return reaching a sink is a blind edge, not silent clean (Codex review)"
+```
+
+---
+
+### Task 8: Keyword-aware `sqlIsParameterized` (Codex Ressalva 2)
+
+`sqlIsParameterized` is positional (`engine.js:22`): it assumes `execute(sql, params)`. With
+keyword args — especially out of order, `execute(params=(uid,), sql="... %s")` — the positional
+`args[0]` is the params tuple, so a SAFE parameterized query is mis-flagged. Make it resolve the
+SQL-string arg and the params arg by keyword when present. Do this AFTER Task 5 (kwargs in IR).
+
+**Files:**
+- Modify: `scripts/lib/taint/engine.js` (`sqlIsParameterized` and its call sites)
+- Test: `tests/rock-house-ci.test.js`
+
+- [ ] **Step 1: Write the failing tests**
+
+Add and register `await testSqlParameterizedKwargs();`:
+
+```javascript
+async function testSqlParameterizedKwargs() {
+  // SAFE: parameterized query with kwargs OUT OF ORDER → must NOT be flagged.
+  let fixture = makeTempProject('rock-house-kwsql-safe-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  writeFile(fixture, 'views.py', [
+    'from flask import request',
+    'def profile():',
+    '    uid = request.args["id"]',
+    '    cur.execute(params=(uid,), sql="SELECT * FROM u WHERE id = %s")'
+  ].join('\n'));
+  let output = path.join(os.tmpdir(), `rock-house-kwsql-safe-${Date.now()}.json`);
+  runScanner(fixture, output, 'bronze');
+  let report = readJson(output);
+  assert(!(report.findings || []).some((f) => f.checkId === 'TAINT-SQLI'),
+    'parameterized query with out-of-order kwargs is safe, not a finding');
+
+  // VULN: the SQL string itself is tainted via a kwarg → must be flagged.
+  fixture = makeTempProject('rock-house-kwsql-vuln-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  writeFile(fixture, 'views.py', [
+    'from flask import request',
+    'def profile():',
+    '    uid = request.args["id"]',
+    '    cur.execute(sql=uid)'
+  ].join('\n'));
+  output = path.join(os.tmpdir(), `rock-house-kwsql-vuln-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+  assert.notStrictEqual(result.status, 0, 'tainted SQL string via kwarg must block');
+  report = readJson(output);
+  assert((report.findings || []).some((f) => f.checkId === 'TAINT-SQLI'), 'tainted sql= kwarg is a finding');
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `node tests/rock-house-ci.test.js`
+Expected: FAIL — the SAFE out-of-order case is mis-flagged (positional `args[0]` is the tainted params tuple).
+
+- [ ] **Step 3: Make `sqlIsParameterized` keyword-aware**
+
+In `scripts/lib/taint/engine.js`, replace `sqlIsParameterized` (lines 21-25) with:
+
+```javascript
+const SQL_STRING_KW = new Set(['sql', 'query', 'statement', 'operation']);
+const SQL_PARAMS_KW = new Set(['params', 'parameters', 'vars', 'args', 'parameter']);
+
+// execute(sql, params) is safe when the tainted value is only in the params, not the SQL string.
+// Keyword-aware: the SQL-string arg may be sql=/query=/statement=, the params arg params=/vars=.
+function sqlIsParameterized(call, taintedVars, ctx) {
+  const args = call.args || [];
+  let sqlArg = args.find((a) => a.keyword && SQL_STRING_KW.has(a.keyword));
+  let hasParams;
+  if (sqlArg) {
+    hasParams = args.some((a) => a !== sqlArg && (!a.keyword || SQL_PARAMS_KW.has(a.keyword)));
+  } else {
+    if (args.length < 2) return false;            // single positional arg → not parameterized
+    sqlArg = args[0];
+    hasParams = true;                             // positional 2nd arg present
+  }
+  if (!hasParams) return false;
+  return !exprIsTainted(sqlArg, taintedVars, ctx);
+}
+```
+
+Thread `ctx` through the four call sites so return-taint resolution stays consistent (ctx is
+optional; existing callers without ctx keep working): in `analyzeFunctionIntra` (the sink line
+~61), in `computeParamCallFlows` (lines ~165 and ~184), and in the `analyzeProjectTaint` emit
+pass (line ~300). Each `sqlIsParameterized(call, taintedVars)` becomes
+`sqlIsParameterized(call, taintedVars, ctx)` where a `ctx` is in scope (pass `null` where none).
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `node tests/rock-house-ci.test.js`
+Expected: PASS — both new cases plus the existing positional `execute(sql, params)` safe-case test stay green.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/lib/taint/engine.js tests/rock-house-ci.test.js
+git commit -m "fix(taint): keyword-aware sqlIsParameterized (out-of-order kwargs no longer false-positive)"
+```
+
+---
+
 ## Final verification (run before handing back for merge)
 
 - [ ] `node tests/rock-house-ci.test.js` → ends with `rock-house-ci tests passed`.

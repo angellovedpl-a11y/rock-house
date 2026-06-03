@@ -86,6 +86,17 @@ function testPyDebugConfigContext() {
   const runtimeHits = run(runtime);
   assert.strictEqual(runtimeHits.length, 1, 'app.run(debug=True) is always flagged');
   assert.strictEqual(runtimeHits[0].line, 5, 'runtime finding points at the app.run line');
+
+  // 4) DEBUG=False exists but NOT inside a prod-style class (module-level) → NOT a valid
+  //    prod-config signal → Dev DEBUG=True is still flagged (Codex Ressalva: tighter heuristic).
+  const devWithModuleLevelFalse = [
+    'DEBUG = False',
+    '',
+    'class DevConfig:',
+    '    DEBUG = True'
+  ];
+  assert.strictEqual(run(devWithModuleLevelFalse).length, 1,
+    'a module-level DEBUG=False is not a prod-config class → no suppression');
 }
 ```
 
@@ -118,15 +129,25 @@ In `scripts/lib/rules/python-flask.js`, replace the single PY-DEBUG object (line
     // that pattern is intentional environment separation, not a production misconfig.
     customMatch: (lines, index) => {
       if (!/^\s*DEBUG\s*=\s*True\b/.test(lines[index])) return false;
-      // Find the nearest enclosing class header above this line.
-      let enclosingClass = null;
-      for (let i = index; i >= 0; i--) {
-        const m = /^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(lines[i]);
-        if (m) { enclosingClass = m[1]; break; }
-      }
+      // Nearest enclosing class header for a given line index.
+      const classOf = (idx) => {
+        for (let i = idx; i >= 0; i--) {
+          const m = /^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(lines[i]);
+          if (m) return m[1];
+        }
+        return null;
+      };
+      const enclosingClass = classOf(index);
       const inDevClass = enclosingClass && /Dev|Test|Local|Debug/i.test(enclosingClass);
-      const fileHasProdFalse = lines.some((l) => /^\s*DEBUG\s*=\s*False\b/.test(l));
-      if (inDevClass && fileHasProdFalse) return false; // intentional env separation → suppress
+      // Codex Ressalva: require DEBUG=False to live inside a PROD-STYLE config class
+      // (Prod/Production/Live/Base/Default), not just anywhere in the file. That is the
+      // real "intentional environment separation" signal.
+      const hasProdConfigFalse = lines.some((l, i) => {
+        if (!/^\s*DEBUG\s*=\s*False\b/.test(l)) return false;
+        const cls = classOf(i);
+        return cls && /Prod|Production|Live|Base|Default/i.test(cls);
+      });
+      if (inDevClass && hasProdConfigFalse) return false; // intentional env separation → suppress
       return true;
     },
     message: 'Flask debug mode enabled in config — exposes the Werkzeug console (RCE) if this config reaches production.',
