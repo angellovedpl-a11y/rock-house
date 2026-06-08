@@ -82,5 +82,21 @@ module.exports = [
       after: 'render_template("hi.html", name=request.args["name"])',
       refs: ['OWASP A03', 'CWE-94']
     }
+  },
+  {
+    id: 'PY-RATELIMIT', severity: 'Medio', vector: 'Auth & Access', languages: ['py'],
+    // Dispara só no memory:// HARDCODED. O idioma seguro
+    // os.environ.get("RATELIMIT_STORAGE_URI", "memory://") é ignorado pelo lineAllowlist:
+    // ali o memory:// é só fallback de dev e produção sobrescreve por env.
+    pattern: /RATELIMIT_STORAGE_URI\s*=\s*["']memory:\/\/|storage_uri\s*=\s*["']memory:\/\//i,
+    lineAllowlist: [/os\.environ|getenv|environ\.get|config\.get/],
+    message: 'Rate-limit com storage memory:// hardcoded — ineficaz em servidor multi-worker (gunicorn/uwsgi).',
+    recommendation: 'Use um store compartilhado (redis://) em produção; deixe memory:// só pra dev local, via override por env.',
+    fixPack: {
+      why: 'memory:// conta por processo: com N workers do gunicorn o limite multiplica por N e zera a cada restart/deploy — o rate limit de login vira ineficaz contra brute-force.',
+      before: 'RATELIMIT_STORAGE_URI = "memory://"',
+      after: 'RATELIMIT_STORAGE_URI = os.environ.get("RATELIMIT_STORAGE_URI", "memory://")  # prod: redis://host:6379/0',
+      refs: ['OWASP A04', 'CWE-770']
+    }
   }
 ];

@@ -45,6 +45,7 @@ const META = {
   'PY-YAML': { title: 'Unsafe YAML load', owasp: ['A08:2021 Software and Data Integrity Failures'], cwe: ['CWE-502'], helpUri: 'https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/' },
   'PY-SQL': { title: 'SQL built from string formatting', owasp: ['A03:2021 Injection'], cwe: ['CWE-89'], helpUri: 'https://owasp.org/Top10/A03_2021-Injection/' },
   'PY-TEMPLATE': { title: 'Server-side template injection risk', owasp: ['A03:2021 Injection'], cwe: ['CWE-94'], helpUri: 'https://owasp.org/Top10/A03_2021-Injection/' },
+  'PY-RATELIMIT': { title: 'Ineffective rate-limit storage (in-memory, multi-worker)', owasp: ['A04:2021 Insecure Design'], cwe: ['CWE-770'], helpUri: 'https://owasp.org/Top10/A04_2021-Insecure_Design/' },
   'I5': { title: 'OS command injection', owasp: ['A03:2021 Injection'], cwe: ['CWE-78'], helpUri: 'https://owasp.org/Top10/A03_2021-Injection/' },
   'I6': { title: 'Path traversal', owasp: ['A01:2021 Broken Access Control'], cwe: ['CWE-22'], helpUri: 'https://owasp.org/Top10/A01_2021-Broken_Access_Control/' },
   'I7': { title: 'Server-side request forgery', owasp: ['A10:2021 Server-Side Request Forgery'], cwe: ['CWE-918'], helpUri: 'https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_%28SSRF%29/' },

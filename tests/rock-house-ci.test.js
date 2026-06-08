@@ -36,6 +36,7 @@ async function run() {
   testMonorepoBlindSpotDetected();
   testSecretDetection();
   testPythonFlaskRules();
+  testRateLimitMemoryStorage();
   testGenericGapRules();
   testFixPackRendering();
   testVulnerableDemoBlocks();
@@ -256,6 +257,33 @@ function testPythonFlaskRules() {
     assert(ids.includes(id), `expected ${id} in app.py findings`);
   }
   assert.strictEqual(report.findings.some((f) => f.file === 'safe.py'), false, 'safe python must not flag');
+}
+
+function testRateLimitMemoryStorage() {
+  const { runRules } = require('../scripts/lib/rules/engine');
+  const rule = require('../scripts/lib/rules/python-flask').find((r) => r.id === 'PY-RATELIMIT');
+  assert(rule, 'PY-RATELIMIT rule is registered');
+
+  const fire = (lines) => {
+    const findings = [];
+    const gates = [];
+    runRules({
+      rules: [rule], language: 'py', rel: 'config.py', lines,
+      addFinding: (severity, id) => findings.push({ severity, id }), gates
+    });
+    return findings.filter((f) => f.id === 'PY-RATELIMIT').length;
+  };
+
+  // Hardcoded memory:// — ineficaz com gunicorn multi-worker → deve disparar.
+  assert.strictEqual(fire(['    RATELIMIT_STORAGE_URI = "memory://"']), 1, 'hardcoded memory:// flags');
+  assert.strictEqual(fire(['limiter = Limiter(app, storage_uri="memory://")']), 1, 'hardcoded storage_uri flags');
+  // Override por env (idioma do bot-radar-ac) — memory:// é só fallback de dev → NÃO deve disparar (honesty guard).
+  assert.strictEqual(
+    fire(['RATELIMIT_STORAGE_URI = os.environ.get("RATELIMIT_STORAGE_URI", "memory://")']), 0,
+    'env-overridable memory:// default must not flag'
+  );
+  // Storage redis em produção → limpo.
+  assert.strictEqual(fire(['    RATELIMIT_STORAGE_URI = "redis://cache:6379/0"']), 0, 'redis storage is clean');
 }
 
 function testGenericGapRules() {
