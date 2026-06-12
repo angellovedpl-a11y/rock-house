@@ -7,6 +7,8 @@
 
 ![Wolf vs Stone House](./assets/wolf-vs-stone-house.svg)
 
+![Rock House](./assets/rock%20house.png)
+
 Security gate for AI-generated web apps. Rock House runs as a GitHub Action,
 local CI scanner, and [Claude Code](https://claude.ai/code) skill. It blocks
 unsafe deploys, collects evidence for high-risk systems, and turns security
