@@ -5,12 +5,14 @@
 [![CI](https://github.com/angellovedpl-a11y/rock-house/actions/workflows/ci.yml/badge.svg)](https://github.com/angellovedpl-a11y/rock-house/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
+![Wolf vs Stone House](./assets/wolf-vs-stone-house.svg)
+
 Security gate for AI-generated web apps. Rock House runs as a GitHub Action,
 local CI scanner, and [Claude Code](https://claude.ai/code) skill. It blocks
 unsafe deploys, collects evidence for high-risk systems, and turns security
 review into a repeatable gate instead of an informal checklist.
 
-Rock House is an internal security gate. It raises the assurance level of a project by collecting evidence, blocking unsafe deploys, and showing what is still unknown. It does not replace pentesting, production monitoring, or expert review for high-risk systems.
+Rock House is an internal security gate. It raises the assurance level of a project by collecting evidence, blocking unsafe deploys, and showing what is still unknown. It does not replace pentesting, [...]
 
 ## Why Teams Adopt It
 
