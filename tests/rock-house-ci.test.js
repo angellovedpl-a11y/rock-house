@@ -18,6 +18,27 @@ run().catch((error) => {
 });
 
 async function run() {
+  testEngineMatching();
+  await testTaintParser();
+  testTaintCatalogs();
+  await testTaintIR();
+  await testTaintIntraprocedural();
+  testTaintFindings();
+  await testTaintScannerIntegration();
+  await testTaintSymbols();
+  await testTaintCallgraph();
+  await testTaintInterprocedural();
+  await testTaintReturnSummary();
+  await testBuildReturnTaint();
+  await testReturnTaintCtx();
+  testUnsupportedStackLowersConfidence();
+  testNoRecognizedStackLowersConfidence();
+  testMonorepoBlindSpotDetected();
+  testSecretDetection();
+  testPythonFlaskRules();
+  testRateLimitMemoryStorage();
+  testGenericGapRules();
+  testFixPackRendering();
   testVulnerableDemoBlocks();
   testCleanFixturePasses();
   testConfigControlsScan();
@@ -45,7 +66,269 @@ async function run() {
   testMissingPathErrors();
   testMissingConfigErrors();
   testInvalidConfigErrors();
+  await testTaintBlindEdgeLowersConfidence();
+  await testTaintTraceRendering();
+  await testTaintUnavailableFallsBackToRegex();
+  await testTaintMultiHopChainIsFound();
+  await testTaintUnavailableIsNotHighConfidence();
+  await testTaintUnresolvedTailInChainIsBlindEdge();
+  await testTaintOverDepthChainIsNotSilentlyClean();
   console.log('rock-house-ci tests passed');
+}
+
+async function testTaintIR() {
+  const { parse } = require('../scripts/lib/taint/parser');
+  const { buildFileIR } = require('../scripts/lib/taint/ir');
+  const src = [
+    '@app.route("/u/<id>")',
+    'def profile(id):',
+    '    q = request.args["id"]',
+    '    cur.execute(q)',
+    '    return q'
+  ].join('\n');
+  const ir = buildFileIR(await parse(src), 'views.py');
+  assert.strictEqual(ir.functions.length, 1, 'one function');
+  const fn = ir.functions[0];
+  assert.strictEqual(fn.name, 'profile');
+  assert.deepStrictEqual(fn.params, ['id'], 'params captured');
+  assert(fn.decorators.some((d) => d.includes('app.route')), 'route decorator captured');
+  assert(fn.assignments.some((a) => a.targets.includes('q')), 'assignment q captured');
+  assert(fn.calls.some((c) => c.calleeDotted.endsWith('execute')), 'execute call captured');
+}
+
+async function testTaintIntraprocedural() {
+  const { parse } = require('../scripts/lib/taint/parser');
+  const { buildFileIR } = require('../scripts/lib/taint/ir');
+  const { analyzeFunctionIntra } = require('../scripts/lib/taint/engine');
+
+  const vuln = ['def profile():', '    q = request.args["id"]', '    cur.execute(q)'].join('\n');
+  let ir = buildFileIR(await parse(vuln), 'views.py');
+  let res = analyzeFunctionIntra(ir.functions[0], 'views.py');
+  assert.strictEqual(res.sinkHits.length, 1, 'one tainted sink hit');
+  assert.strictEqual(res.sinkHits[0].sinkId, 'TAINT-SQLI');
+
+  const safe = ['def profile():', '    q = int(request.args["id"])', '    cur.execute(q)'].join('\n');
+  ir = buildFileIR(await parse(safe), 'views.py');
+  res = analyzeFunctionIntra(ir.functions[0], 'views.py');
+  assert.strictEqual(res.sinkHits.length, 0, 'sanitized value is not a sink hit');
+}
+
+function testTaintFindings() {
+  const { emitTaintFinding } = require('../scripts/lib/taint/findings');
+  const calls = [];
+  const addFinding = (...args) => calls.push(args);
+  const path = {
+    sinkId: 'TAINT-SQLI', severity: 'Critico',
+    hops: [
+      { file: 'views.py', line: 2, text: 'request.args["id"]', role: 'source' },
+      { file: 'db.py', line: 7, text: 'cur.execute(q)', role: 'sink' }
+    ]
+  };
+  emitTaintFinding(path, addFinding);
+  assert.strictEqual(calls.length, 1, 'one finding emitted');
+  const [severity, checkId, vector, file, line, desc, fix, fixPack] = calls[0];
+  assert.strictEqual(severity, 'Critico');
+  assert.strictEqual(checkId, 'TAINT-SQLI');
+  assert.strictEqual(file, 'db.py');
+  assert.strictEqual(line, 7, 'finding sits at the sink');
+  assert(desc.includes('request.args'), 'trace mentions the source');
+  assert(fixPack && fixPack.after, 'carries a fix pack');
+}
+
+async function testTaintScannerIntegration() {
+  const fixture = makeTempProject('rock-house-taint-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  writeFile(fixture, 'app.py', [
+    'from flask import request',
+    'def profile():',
+    '    q = request.args["id"]',
+    '    cur.execute(q)'
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-taint-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.notStrictEqual(result.status, 0, 'tainted SQLi must block');
+  const report = readJson(output);
+  const t = report.findings.find((f) => f.checkId === 'TAINT-SQLI');
+  assert(t, 'TAINT-SQLI finding present');
+  assert(Array.isArray(t.taintTrace) && t.taintTrace.length >= 2, 'finding carries a trace');
+  assert(report.coverage.taint && report.coverage.taint.ran === true, 'coverage records taint ran');
+}
+
+function testUnsupportedStackLowersConfidence() {
+  const fixture = makeTempProject('rock-house-coverage-gap-');
+  // A Go project: recognized stack, but Rock House has no Go rule family.
+  writeFile(fixture, 'go.mod', 'module example.com/app\n\ngo 1.22\n');
+  writeFile(fixture, 'main.go', 'package main\nfunc main() {}\n');
+
+  const output = path.join(os.tmpdir(), `rock-house-coverage-gap-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.notStrictEqual(result.status, 0, 'unsupported stack must not earn a passing gate');
+  const report = readJson(output);
+  assert.strictEqual(report.confidence, 'Baixa', 'coverage gap forces Baixa confidence');
+  assert.strictEqual(report.certification, 'Bloqueado', 'Baixa confidence blocks');
+  assert(Array.isArray(report.coverage.gaps), 'report exposes coverage.gaps');
+  assert(report.coverage.gaps.includes('go'), 'go is reported as a blind spot');
+}
+
+function testNoRecognizedStackLowersConfidence() {
+  // Codex correction #1: a repo with no recognized stack AND no blind-spot manifest
+  // was never really audited -- it must not pass with high confidence.
+  const fixture = makeTempProject('rock-house-no-stack-');
+  writeFile(fixture, 'NOTES.txt', 'just notes -- nothing the scanner recognizes');
+
+  const output = path.join(os.tmpdir(), `rock-house-no-stack-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  const report = readJson(output);
+  assert.strictEqual(report.confidence, 'Baixa', 'no recognized stack forces Baixa');
+  assert.strictEqual(report.coverage.audited, false, 'nothing recognized is not "audited"');
+  assert.strictEqual(report.coverage.gaps.length, 0, 'no blind-spot manifest, yet still blocked');
+  assert.notStrictEqual(result.status, 0, 'an unaudited repo must not earn a passing gate');
+}
+
+function testMonorepoBlindSpotDetected() {
+  // Codex correction #2: blind spots in subdirectories (monorepo) must be found,
+  // not only at the repo root.
+  const fixture = makeTempProject('rock-house-monorepo-');
+  writeFile(fixture, 'package.json', JSON.stringify({ dependencies: { next: '14.0.0', react: '18.0.0' } }));
+  writeFile(fixture, 'services/api/Cargo.toml', '[package]\nname = "api"');
+
+  const output = path.join(os.tmpdir(), `rock-house-monorepo-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  const report = readJson(output);
+  assert(report.coverage.gaps.includes('rust'), 'rust blind spot found in services/api/');
+  assert.strictEqual(report.confidence, 'Baixa', 'a nested blind spot forces Baixa');
+  assert.notStrictEqual(result.status, 0, 'monorepo blind spot blocks');
+}
+
+function testSecretDetection() {
+  const fixture = makeTempProject('rock-house-secrets-');
+  // Real-looking hardcoded secrets in source.
+  // Fake fixtures (AWS/Stripe doc sample keys). The Stripe literal is split so
+  // GitHub push protection doesn't flag the source; runtime output is identical.
+  writeFile(fixture, 'config.py', [
+    'AWS_KEY = "AKIAIOSFODNN7EXAMPLE"',
+    'STRIPE = "sk_live_' + '4eC39HqLyjWDarjtT1zdp7dcABCDEFGH"'
+  ].join('\n'));
+  // Allowlisted: example file with placeholder must NOT flag.
+  writeFile(fixture, '.env.example', 'AWS_KEY=your-key-here\nSTRIPE=sk_live_xxxxxxxxxxxx\n');
+
+  const output = path.join(os.tmpdir(), `rock-house-secrets-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.notStrictEqual(result.status, 0, 'hardcoded secrets must block');
+  const report = readJson(output);
+  assert(report.findings.some((f) => f.checkId === 'SEC-AWS' && f.file === 'config.py'), 'AWS key detected');
+  assert(report.findings.some((f) => f.checkId === 'SEC-STRIPE' && f.file === 'config.py'), 'Stripe key detected');
+  assert.strictEqual(report.findings.some((f) => f.file === '.env.example'), false, 'allowlisted example file must not flag');
+  const aws = report.findings.find((f) => f.checkId === 'SEC-AWS');
+  assert(aws.fixPack && aws.fixPack.before && aws.fixPack.after, 'secret finding carries a fix pack');
+}
+
+function testPythonFlaskRules() {
+  const fixture = makeTempProject('rock-house-python-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  writeFile(fixture, 'app.py', [
+    'import subprocess, pickle, yaml',
+    'app.run(debug=True)',
+    'subprocess.call(cmd, shell=True)',
+    'data = pickle.loads(payload)',
+    'cfg = yaml.load(stream)',
+    'query = f"SELECT * FROM users WHERE id = {user_id}"'
+  ].join('\n'));
+  // Clean Python file must not be flagged.
+  writeFile(fixture, 'safe.py', [
+    'import subprocess, yaml',
+    'subprocess.run(["ls", "-la"])',
+    'cfg = yaml.safe_load(stream)'
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-python-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.notStrictEqual(result.status, 0, 'insecure python must block');
+  const report = readJson(output);
+  const ids = report.findings.filter((f) => f.file === 'app.py').map((f) => f.checkId);
+  for (const id of ['PY-DEBUG', 'PY-SHELL', 'PY-PICKLE', 'PY-YAML', 'PY-SQL']) {
+    assert(ids.includes(id), `expected ${id} in app.py findings`);
+  }
+  assert.strictEqual(report.findings.some((f) => f.file === 'safe.py'), false, 'safe python must not flag');
+}
+
+function testRateLimitMemoryStorage() {
+  const { runRules } = require('../scripts/lib/rules/engine');
+  const rule = require('../scripts/lib/rules/python-flask').find((r) => r.id === 'PY-RATELIMIT');
+  assert(rule, 'PY-RATELIMIT rule is registered');
+
+  const fire = (lines) => {
+    const findings = [];
+    const gates = [];
+    runRules({
+      rules: [rule], language: 'py', rel: 'config.py', lines,
+      addFinding: (severity, id) => findings.push({ severity, id }), gates
+    });
+    return findings.filter((f) => f.id === 'PY-RATELIMIT').length;
+  };
+
+  // Hardcoded memory:// — ineficaz com gunicorn multi-worker → deve disparar.
+  assert.strictEqual(fire(['    RATELIMIT_STORAGE_URI = "memory://"']), 1, 'hardcoded memory:// flags');
+  assert.strictEqual(fire(['limiter = Limiter(app, storage_uri="memory://")']), 1, 'hardcoded storage_uri flags');
+  // Override por env (idioma do bot-radar-ac) — memory:// é só fallback de dev → NÃO deve disparar (honesty guard).
+  assert.strictEqual(
+    fire(['RATELIMIT_STORAGE_URI = os.environ.get("RATELIMIT_STORAGE_URI", "memory://")']), 0,
+    'env-overridable memory:// default must not flag'
+  );
+  // Storage redis em produção → limpo.
+  assert.strictEqual(fire(['    RATELIMIT_STORAGE_URI = "redis://cache:6379/0"']), 0, 'redis storage is clean');
+}
+
+function testGenericGapRules() {
+  const fixture = makeTempProject('rock-house-generic-');
+  writeFile(fixture, 'server.js', [
+    'const cp = require("child_process");',
+    'cp.exec("ping " + req.query.host);',
+    'const h = crypto.createHash("md5");',
+    'const token = Math.random().toString(36);',
+    'fetch(req.query.url);',
+    'res.redirect(req.query.next);'
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-generic-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.notStrictEqual(result.status, 0, 'generic vulns must block');
+  const report = readJson(output);
+  const ids = report.findings.map((f) => f.checkId);
+  for (const id of ['I5', 'C1', 'C2', 'I7', 'H7']) {
+    assert(ids.includes(id), `expected ${id} in findings`);
+  }
+}
+
+function testFixPackRendering() {
+  const fixture = makeTempProject('rock-house-fixpack-');
+  writeFile(fixture, 'config.py', 'AWS_KEY = "AKIAIOSFODNN7EXAMPLE"\n');
+
+  const output = path.join(fixture, 'report.json');
+  const sarifOutput = path.join(fixture, 'report.sarif');
+  const markdownOutput = path.join(fixture, 'summary.md');
+  const result = runScanner(fixture, output, 'bronze', { sarifOutput, markdownOutput });
+
+  assert.notStrictEqual(result.status, 0);
+  const report = readJson(output);
+  const aws = report.findings.find((f) => f.checkId === 'SEC-AWS');
+  assert(aws.fixPack && aws.fixPack.after, 'JSON finding carries fixPack');
+
+  const md = fs.readFileSync(markdownOutput, 'utf8');
+  assert(md.includes('## Pacotes de Correcao'), 'Markdown has fix-pack section');
+  assert(md.includes('AWS_KEY = os.environ'), 'Markdown shows the after snippet');
+
+  const sarif = readJson(sarifOutput);
+  const awsResult = sarif.runs[0].results.find((r) => r.ruleId === 'SEC-AWS');
+  assert(awsResult.properties.fixAfter, 'SARIF result carries fixAfter property');
 }
 
 function testBaselineFailOnNewOnly() {
@@ -1003,7 +1286,7 @@ function runScanner(target, output, minLevel, options = {}) {
     args.push('--markdown', options.markdownOutput);
   }
 
-  const env = { ...process.env };
+  const env = { ...process.env, ...(options.env || {}) };
   if (options.stepSummary) {
     env.GITHUB_STEP_SUMMARY = options.stepSummary;
   }
@@ -1147,6 +1430,245 @@ function runPolicyScan(root, assurancePath, publicKey, keyId, assurancePolicy, t
   return readJson(output);
 }
 
+function testTaintCatalogs() {
+  const c = require('../scripts/lib/taint/catalogs');
+  assert.strictEqual(c.isSourceExpr('request.args'), true, 'request.args is a source');
+  assert.strictEqual(c.isSourceExpr('os.path.join'), false, 'os.path.join is not a source');
+  const sink = c.sinkFor('cursor.execute');
+  assert(sink && sink.id === 'TAINT-SQLI', 'cursor.execute -> TAINT-SQLI');
+  assert.strictEqual(c.sinkFor('render_template_string').id, 'TAINT-SSTI', 'SSTI sink');
+  assert.strictEqual(c.isSanitizer('int'), true, 'int() sanitizes');
+  assert.strictEqual(c.isSanitizer('escape'), true, 'escape() sanitizes');
+}
+
+async function testTaintParser() {
+  const { parse } = require('../scripts/lib/taint/parser');
+  const tree = await parse('def view(req):\n    return req\n');
+  assert.strictEqual(tree.rootNode.type, 'module', 'root is module');
+  assert.strictEqual(tree.rootNode.firstChild.type, 'function_definition', 'first child is a function');
+}
+
+async function testTaintCallgraph() {
+  const { parse } = require('../scripts/lib/taint/parser');
+  const { buildFileIR } = require('../scripts/lib/taint/ir');
+  const { buildSymbolTable } = require('../scripts/lib/taint/symbols');
+  const { resolveCall } = require('../scripts/lib/taint/callgraph');
+
+  const dbIr = buildFileIR(await parse('def run_query(sql):\n    cur.execute(sql)\n'), 'db.py');
+  const viewsIr = buildFileIR(await parse('from db import run_query\ndef v():\n    run_query(x)\n    mystery(x)\n'), 'views.py');
+  const table = buildSymbolTable([dbIr, viewsIr]);
+  const vFn = viewsIr.functions[0];
+
+  const resolved = resolveCall(vFn.calls.find((c) => c.calleeLast === 'run_query'), viewsIr, table);
+  assert.strictEqual(resolved.kind, 'function', 'resolves to a repo function');
+  assert.strictEqual(resolved.fn.qualname, 'db.run_query');
+
+  const blind = resolveCall(vFn.calls.find((c) => c.calleeLast === 'mystery'), viewsIr, table);
+  assert.strictEqual(blind.kind, 'unresolved', 'unknown callee -> unresolved (blind edge)');
+}
+
+async function testTaintInterprocedural() {
+  const fixture = makeTempProject('rock-house-taint-inter-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  writeFile(fixture, 'db.py', ['def run_query(sql):', '    cur.execute(sql)'].join('\n'));
+  writeFile(fixture, 'views.py', [
+    'from flask import request',
+    'from db import run_query',
+    'def profile():',
+    '    uid = request.args["id"]',
+    '    run_query(uid)'
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-taint-inter-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.notStrictEqual(result.status, 0, 'cross-file SQLi must block');
+  const report = readJson(output);
+  const t = report.findings.find((f) => f.checkId === 'TAINT-SQLI');
+  assert(t, 'cross-file TAINT-SQLI found');
+  const files = (t.taintTrace || []).map((h) => h.file);
+  assert(files.includes('views.py') && files.includes('db.py'), 'trace spans both files');
+}
+
+async function testTaintReturnSummary() {
+  const { parse } = require('../scripts/lib/taint/parser');
+  const { buildFileIR } = require('../scripts/lib/taint/ir');
+  const { analyzeFunctionIntra } = require('../scripts/lib/taint/engine');
+
+  // returns a source directly → returnIsSource true, no param needed
+  let ir = buildFileIR(await parse('def get_q():\n    return request.args["x"]\n'), 'h.py');
+  let res = analyzeFunctionIntra(ir.functions[0], 'h.py');
+  assert.strictEqual(res.summary.returnIsSource, true, 'source-returning helper flagged');
+
+  // returns its param → paramTaintsReturn has it, returnIsSource false
+  ir = buildFileIR(await parse('def wrap(x):\n    return x\n'), 'h.py');
+  res = analyzeFunctionIntra(ir.functions[0], 'h.py', ['x']);
+  assert.strictEqual(res.summary.returnIsSource, false, 'param passthrough is not a source');
+  assert(res.summary.paramTaintsReturn.has('x'), 'param flow to return tracked');
+
+  // returns a constant → neither
+  ir = buildFileIR(await parse('def c():\n    return 42\n'), 'h.py');
+  res = analyzeFunctionIntra(ir.functions[0], 'h.py');
+  assert.strictEqual(res.summary.returnIsSource, false, 'constant return is clean');
+}
+
+async function testBuildReturnTaint() {
+  const { parse } = require('../scripts/lib/taint/parser');
+  const { buildFileIR } = require('../scripts/lib/taint/ir');
+  const { buildSymbolTable } = require('../scripts/lib/taint/symbols');
+  const { buildReturnTaint } = require('../scripts/lib/taint/engine');
+
+  const hIr = buildFileIR(await parse('def get_q():\n    return request.args["x"]\n'), 'h.py');
+  const vIr = buildFileIR(await parse('from h import get_q\ndef a():\n    return get_q()\n'), 'v.py');
+  const symbols = buildSymbolTable([hIr, vIr]);
+  const rt = buildReturnTaint([hIr, vIr], symbols);
+
+  assert.strictEqual(rt.get('h.get_q').returnIsSource, true, 'direct source return');
+  assert.strictEqual(rt.get('v.a').returnIsSource, true, 'inherited through resolved call (fixpoint)');
+}
+
+async function testReturnTaintCtx() {
+  const { parse } = require('../scripts/lib/taint/parser');
+  const { buildFileIR } = require('../scripts/lib/taint/ir');
+  const { buildSymbolTable } = require('../scripts/lib/taint/symbols');
+  const { analyzeFunctionIntra, buildReturnTaint, makeReturnTaintCtx } = require('../scripts/lib/taint/engine');
+
+  // get_q() returns a source; profile assigns it and sinks it — must be a hit WITH ctx.
+  const hIr = buildFileIR(await parse('def get_q():\n    return request.args["x"]\n'), 'h.py');
+  const vIr = buildFileIR(await parse('from h import get_q\ndef profile():\n    q = get_q()\n    cur.execute(q)\n'), 'v.py');
+  const symbols = buildSymbolTable([hIr, vIr]);
+  const rt = buildReturnTaint([hIr, vIr], symbols);
+  const ctx = makeReturnTaintCtx(rt, symbols, vIr);
+
+  const profile = vIr.functions.find((f) => f.name === 'profile');
+  const withCtx = analyzeFunctionIntra(profile, 'v.py', [], ctx);
+  assert.strictEqual(withCtx.sinkHits.length, 1, 'return-source helper makes the sink a hit');
+  assert.strictEqual(withCtx.sinkHits[0].sinkId, 'TAINT-SQLI');
+
+  // Without ctx, today's behavior: the no-arg call is not a source → no hit (proves no regression of the default).
+  const noCtx = analyzeFunctionIntra(profile, 'v.py', []);
+  assert.strictEqual(noCtx.sinkHits.length, 0, 'no ctx = unchanged conservative default');
+}
+
+async function testTaintSymbols() {
+  const { parse } = require('../scripts/lib/taint/parser');
+  const { buildFileIR } = require('../scripts/lib/taint/ir');
+  const { buildSymbolTable } = require('../scripts/lib/taint/symbols');
+
+  const dbIr = buildFileIR(await parse('def run_query(sql):\n    cur.execute(sql)\n'), 'db.py');
+  const viewsIr = buildFileIR(await parse('from db import run_query\ndef v():\n    run_query(request.args["q"])\n'), 'views.py');
+  const table = buildSymbolTable([dbIr, viewsIr]);
+
+  assert(table.functionByQual.has('db.run_query'), 'function indexed by qualname');
+  const resolved = table.resolveImported('views.py', 'run_query');
+  assert(resolved && resolved.qualname === 'db.run_query', 'import resolves across files');
+}
+
+// HOLE 1: a param flows into an UNRESOLVED call deep inside a RESOLVED chain.
+// run_query's summary stays "clean" (its body only calls an external/unresolved lib),
+// so profile->run_query must NOT be reported as silently clean: the unresolved tail is
+// a blind edge that the engine has to surface and that must lower confidence.
+async function testTaintUnresolvedTailInChainIsBlindEdge() {
+  const fixture = makeTempProject('rock-house-taint-unrestail-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  writeFile(fixture, 'db.py', [
+    'def run_query(sql):',
+    '    external_lib.runit(sql)'   // unresolved — taint vanishes here
+  ].join('\n'));
+  writeFile(fixture, 'views.py', [
+    'from flask import request',
+    'from db import run_query',
+    'def profile():',
+    '    uid = request.args["id"]',
+    '    run_query(uid)'
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-taint-unrestail-${Date.now()}.json`);
+  runScanner(fixture, output, 'bronze');
+  const report = readJson(output);
+  assert(report.coverage.taint.ran === true, 'taint ran');
+  // Honest-degradation: the unresolved tail must surface as a blind edge and drop confidence.
+  assert(report.coverage.taint.blindEdges >= 1, 'unresolved tail inside a resolved chain is a blind edge');
+  assert.notStrictEqual(report.confidence, 'Alta', 'unresolved tail means confidence is not Alta');
+}
+
+// HOLE 2: a fully-RESOLVED chain longer than MAX_DEPTH must not be silently clean.
+// The summary-composition fixpoint is bounded; a chain deeper than it can converge on
+// must degrade honestly (a found SQLi OR a blind edge), never a clean Alta.
+async function testTaintOverDepthChainIsNotSilentlyClean() {
+  const fixture = makeTempProject('rock-house-taint-overdepth-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  const N = 12; // > MAX_DEPTH (8)
+  const lines = [
+    'from flask import request',
+    'def f0():',
+    '    seed = request.args["id"]',
+    '    f1(seed)'
+  ];
+  for (let i = 1; i < N - 1; i++) {
+    lines.push(`def f${i}(x${i}):`);
+    lines.push(`    f${i + 1}(x${i})`);
+  }
+  // The tail does the actual sink.
+  lines.push(`def f${N - 1}(x${N - 1}):`);
+  lines.push(`    cur.execute(x${N - 1})`);
+  writeFile(fixture, 'chain.py', lines.join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-taint-overdepth-${Date.now()}.json`);
+  runScanner(fixture, output, 'bronze');
+  const report = readJson(output);
+  assert(report.coverage.taint.ran === true, 'taint ran');
+  const found = (report.findings || []).some((f) => f.checkId === 'TAINT-SQLI');
+  const blind = report.coverage.taint.blindEdges >= 1;
+  assert(found || blind, 'over-depth chain must be found OR raise a blind edge, never silent');
+  assert.notStrictEqual(report.confidence, 'Alta', 'over-depth chain means confidence is not Alta');
+}
+
+function testEngineMatching() {
+  const { languageFor, runRules } = require('../scripts/lib/rules/engine');
+  assert.strictEqual(languageFor('.tsx'), 'js');
+  assert.strictEqual(languageFor('.py'), 'py');
+  assert.strictEqual(languageFor('.go'), 'other');
+
+  const findings = [];
+  const gates = [];
+  const addFinding = (severity, id, vector, file, line, desc, fix, fixPack) =>
+    findings.push({ severity, id, vector, file, line, desc, fix, fixPack });
+
+  const rules = [
+    { id: 'T1', severity: 'Alto', vector: 'Test', languages: ['py'],
+      pattern: /danger\(/, message: 'danger', recommendation: 'stop', fixPack: { why: 'x' } },
+    { id: 'T2', severity: 'Critico', vector: 'Test', languages: ['js'],
+      pattern: /never/, message: 'never', recommendation: 'no' },
+    { id: 'T3', severity: 'Medio', vector: 'Test', languages: ['*'],
+      pattern: /flagged/, flow: { window: 3, negate: /safe/ }, message: 'flow', recommendation: 'fix' }
+  ];
+
+  // py file: T1 fires, T2 (js only) does not
+  runRules({ rules, language: 'py', rel: 'a.py', lines: ['ok', 'danger()', 'never'], addFinding, gates });
+  assert.strictEqual(findings.filter((f) => f.id === 'T1').length, 1);
+  assert.strictEqual(findings.filter((f) => f.id === 'T2').length, 0);
+  assert.strictEqual(findings.find((f) => f.id === 'T1').line, 2, 'line is 1-based');
+  assert.deepStrictEqual(findings.find((f) => f.id === 'T1').fixPack, { why: 'x' });
+
+  // flow negate: "flagged" near "safe" is suppressed
+  findings.length = 0;
+  runRules({ rules, language: 'js', rel: 'b.js', lines: ['flagged', 'safe'], addFinding, gates });
+  assert.strictEqual(findings.filter((f) => f.id === 'T3').length, 0, 'negate suppresses');
+  findings.length = 0;
+  runRules({ rules, language: 'js', rel: 'c.js', lines: ['flagged', 'plain'], addFinding, gates });
+  assert.strictEqual(findings.filter((f) => f.id === 'T3').length, 1, 'no negate -> fires');
+
+  // gate rule pushes to gates, not findings
+  findings.length = 0;
+  gates.length = 0;
+  const gateRule = [{ id: 'T4', languages: ['*'], pattern: /warn/, gate: { id: 'H4', status: 'WARN', note: 'n' } }];
+  runRules({ rules: gateRule, language: 'js', rel: 'd.js', lines: ['warn'], addFinding, gates });
+  assert.strictEqual(findings.length, 0);
+  assert.strictEqual(gates.length, 1);
+  assert.strictEqual(gates[0].status, 'WARN');
+}
+
 function startServer(handler) {
   const server = http.createServer(handler);
   return new Promise((resolve, reject) => {
@@ -1168,4 +1690,117 @@ function closeServer(server) {
       else resolve();
     });
   });
+}
+
+async function testTaintBlindEdgeLowersConfidence() {
+  const fixture = makeTempProject('rock-house-taint-blind-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  // Tainted value passes into an unresolved (dynamic) call before any sink.
+  writeFile(fixture, 'app.py', [
+    'from flask import request',
+    'def v():',
+    '    x = request.args["id"]',
+    '    mystery_helper(x)'
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-taint-blind-${Date.now()}.json`);
+  runScanner(fixture, output, 'bronze');
+  const report = readJson(output);
+  assert(report.coverage.taint.ran === true, 'taint ran');
+  assert(report.coverage.taint.blindEdges >= 1, 'blind edge recorded for the unresolved call');
+  assert.notStrictEqual(report.confidence, 'Alta', 'blind edge means confidence is not Alta');
+}
+
+async function testTaintTraceRendering() {
+  const fixture = makeTempProject('rock-house-taint-md-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  writeFile(fixture, 'app.py', [
+    'from flask import request',
+    'def v():',
+    '    q = request.args["id"]',
+    '    cur.execute(q)'
+  ].join('\n'));
+  const output = path.join(fixture, 'r.json');
+  const markdownOutput = path.join(fixture, 's.md');
+  runScanner(fixture, output, 'bronze', { markdownOutput });
+  const md = fs.readFileSync(markdownOutput, 'utf8');
+  assert(/\*\*Fluxo:\*\*/.test(md), 'fixPacksSection renders the **Fluxo:** trace line');
+}
+
+async function testTaintUnavailableFallsBackToRegex() {
+  const fixture = makeTempProject('rock-house-taint-na-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  // Intentionally minimal: only PY-DEBUG (a regex rule) is asserted, so the
+  // fixture omits `from flask import request` — the SQLi lines just give the
+  // taint engine something to (fail to) analyze when the parser is unavailable.
+  writeFile(fixture, 'app.py', [
+    'app.run(debug=True)',           // regex rule PY-DEBUG must still fire
+    'q = request.args["id"]',
+    'cur.execute(q)'
+  ].join('\n'));
+  const output = path.join(os.tmpdir(), `rock-house-taint-na-${Date.now()}.json`);
+  // Force the taint parser to fail by pointing it at a non-existent wasm.
+  // Use prata (silver) gate: PY-DEBUG earns Bronze cert, which fails the prata gate → exit 1.
+  const result = runScanner(fixture, output, 'prata', { env: { ROCKHOUSE_PYTHON_WASM: path.join(fixture, 'nope.wasm') } });
+  const report = readJson(output);
+  assert(report.findings.some((f) => f.checkId === 'PY-DEBUG'), 'regex rules still run when taint is unavailable');
+  assert.strictEqual(report.coverage.taint.ran, false, 'taint did not run (parser unavailable)');
+  assert(report.coverage.taint.blindEdges >= 1, 'degradation recorded as a blind edge');
+  assert.notStrictEqual(result.status, 0, 'still blocks on the regex findings (Bronze cert < prata gate)');
+}
+
+// GAP 1: a tainted source flows through a chain of RESOLVED repo calls
+// (profile -> wrapper -> run_query -> cur.execute). Each intermediate function's
+// summary is empty on its own; only transitive composition surfaces the SQLi.
+async function testTaintMultiHopChainIsFound() {
+  const fixture = makeTempProject('rock-house-taint-multihop-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  writeFile(fixture, 'db.py', [
+    'def wrapper(s):',
+    '    run_query(s)',
+    'def run_query(sql):',
+    '    cur.execute(sql)'
+  ].join('\n'));
+  writeFile(fixture, 'views.py', [
+    'from flask import request',
+    'from db import wrapper',
+    'def profile():',
+    '    uid = request.args["id"]',
+    '    wrapper(uid)'
+  ].join('\n'));
+
+  const output = path.join(os.tmpdir(), `rock-house-taint-multihop-${Date.now()}.json`);
+  const result = runScanner(fixture, output, 'bronze');
+
+  assert.notStrictEqual(result.status, 0, 'multi-hop cross-file SQLi must block');
+  const report = readJson(output);
+  const t = report.findings.find((f) => f.checkId === 'TAINT-SQLI');
+  assert(t, 'multi-hop TAINT-SQLI found');
+  const files = (t.taintTrace || []).map((h) => h.file);
+  assert(files.includes('views.py'), 'trace includes the source/views file');
+  assert(files.includes('db.py'), 'trace includes the true sink file');
+}
+
+// GAP 2: when the WASM parser cannot load, deep analysis never runs (ran===false)
+// but a blind edge is recorded and a TAINT-UNAVAILABLE unknown is emitted. A Python
+// project we could not analyze must NOT score Alta.
+async function testTaintUnavailableIsNotHighConfidence() {
+  const fixture = makeTempProject('rock-house-taint-na-conf-');
+  writeFile(fixture, 'requirements.txt', 'flask==3.0.0\n');
+  // A .git dir suppresses the S2 (git-history) unknown, keeping summary.unknown at 1
+  // (just TAINT-UNAVAILABLE). That isolates the discriminator: only the blind-edge
+  // penalty — which the old code skipped when ran===false — can lower confidence.
+  fs.mkdirSync(path.join(fixture, '.git'), { recursive: true });
+  writeFile(fixture, 'app.py', [
+    'from flask import request',
+    'def v():',
+    '    q = request.args["id"]',
+    '    cur.execute(q)'
+  ].join('\n'));
+  const output = path.join(os.tmpdir(), `rock-house-taint-na-conf-${Date.now()}.json`);
+  runScanner(fixture, output, 'bronze', { env: { ROCKHOUSE_PYTHON_WASM: path.join(fixture, 'nope.wasm') } });
+  const report = readJson(output);
+  assert.strictEqual(report.coverage.taint.ran, false, 'taint did not run (parser unavailable)');
+  assert(report.coverage.taint.blindEdges >= 1, 'parser-unavailable recorded as a blind edge');
+  assert.notStrictEqual(report.confidence, 'Alta', 'Python we could not analyze is not Alta confidence');
 }

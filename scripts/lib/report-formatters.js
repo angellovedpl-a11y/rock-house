@@ -1,3 +1,5 @@
+const { formatHop } = require('./taint/findings');
+
 const REPO_URL = 'https://github.com/angellovedpl-a11y/rock-house';
 
 function toMarkdown(report) {
@@ -29,11 +31,24 @@ function toMarkdown(report) {
     '|---------|------|-------|-------|---------|',
     `| ${report.summary.critical} | ${report.summary.high} | ${report.summary.medium} | ${report.summary.low} | ${report.summary.unknown} |`,
     '',
+    '## Cobertura',
+    '',
+    report.coverage
+      ? `${report.coverage.audited ? '✅' : '⚠️'} ${report.coverage.note}`
+      : 'Cobertura não avaliada.',
+    report.coverage && report.coverage.gaps && report.coverage.gaps.length
+      ? `**Pontos cegos:** ${report.coverage.gaps.join(', ')}`
+      : '',
+    '',
     '## Bloqueios / Findings',
     '',
     topFindings.length ? findingsTable(topFindings) : 'Nenhum finding reportado.',
     '',
     report.findings.length > topFindings.length ? `_Mostrando 10 de ${report.findings.length} findings._` : '',
+    '',
+    '## Pacotes de Correcao',
+    '',
+    fixPacksSection(topFindings),
     '',
     '## Supressoes',
     '',
@@ -123,7 +138,13 @@ function toSarif(report) {
             owasp: finding.rule?.owasp || [],
             cwe: finding.rule?.cwe || [],
             impact: finding.impact,
-            recommendation: finding.recommendation
+            recommendation: finding.recommendation,
+            fixBefore: finding.fixPack?.before || '',
+            fixAfter: finding.fixPack?.after || '',
+            fixCommand: finding.fixPack?.command || '',
+            taintTrace: Array.isArray(finding.taintTrace)
+              ? finding.taintTrace.map(formatHop)
+              : []
           }
         }))
       }
@@ -151,6 +172,27 @@ function findingsTable(items) {
     rows.push(`| ${escapeMd(finding.severity)} | ${escapeMd(finding.checkId)} | ${escapeMd(ruleLabel(finding))} | \`${escapeMd(`${finding.file}:${finding.line}`)}\` | ${escapeMd(finding.description)} | ${escapeMd(finding.recommendation)} |`);
   }
   return rows.join('\n');
+}
+
+function fixPacksSection(items) {
+  const blocks = [];
+  for (const f of items) {
+    if (!f.fixPack) continue;
+    const fp = f.fixPack;
+    const lines = [
+      `### [${f.severity}] ${f.checkId} — ${escapeMd(f.rule?.title || f.description)}  (\`${f.file}:${f.line}\`)`,
+      Array.isArray(f.taintTrace) && f.taintTrace.length
+        ? `**Fluxo:** ${escapeMd(f.taintTrace.map(formatHop).join(' → '))}`
+        : '',
+      fp.why ? `**Por que:** ${escapeMd(fp.why)}` : '',
+      fp.before ? `**Antes:** \`${escapeMd(fp.before)}\`` : '',
+      fp.after ? `**Depois:** \`${escapeMd(fp.after)}\`` : '',
+      fp.command ? `**Comando:** \`${escapeMd(fp.command)}\`` : '',
+      Array.isArray(fp.refs) && fp.refs.length ? `**Ref:** ${escapeMd(fp.refs.join(' / '))}` : ''
+    ].filter((l) => l !== '');
+    blocks.push(lines.join('\n'));
+  }
+  return blocks.length ? blocks.join('\n\n') : 'Nenhum pacote de correcao disponivel.';
 }
 
 function unknownTable(items) {

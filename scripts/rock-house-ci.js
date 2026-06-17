@@ -14,9 +14,12 @@ const {
 const { evaluateAssurance, loadAssurance } = require('./lib/assurance');
 const { runDast } = require('./lib/dast');
 const { evaluateObservability, resolveObservabilityConfig } = require('./lib/observability');
-const { shouldFlagInnerHtml } = require('./lib/js-detection');
 const { toMarkdown, toSarif } = require('./lib/report-formatters');
 const { impactFor, ruleFor } = require('./lib/rules');
+const { languageFor, runRules } = require('./lib/rules/engine');
+const { DETECTION_RULES } = require('./lib/rules/index');
+const { evaluateCoverage } = require('./lib/rules/coverage');
+const { analyzeProject } = require('./lib/taint');
 const { scanPnpmWorkspace } = require('./lib/supply-chain-detection');
 
 const args = parseArgs(process.argv.slice(2));
@@ -98,6 +101,7 @@ async function main() {
   const observabilityReport = evaluateObservability({ targetRoot, files, packageJsonPath, observability, fail });
 
   scanFiles(files);
+  const taintResult = await analyzeProject({ files, targetRoot, addFinding, addUnknown });
   scanPackageJson(packageJsonPath, hasPackageJson);
   scanLockfile(hasPackageJson);
   scanPnpmWorkspace(targetRoot, hasPackageJson, addFinding);
@@ -130,7 +134,9 @@ async function main() {
   const gateFindings = failOnNewOnly ? newFindings : findings;
   const summary = summarize(gateFindings, unknown);
   const score = calculateScore(summary);
-  const confidence = calculateConfidence(summary);
+  const coverage = evaluateCoverage(targetRoot);
+  coverage.taint = taintResult.taint;
+  const confidence = calculateConfidence(summary, coverage);
   const certification = decideCertification(summary, score, confidence);
   const result = certification === 'Bloqueado' ? 'blocked' : 'passed';
 
@@ -150,6 +156,7 @@ async function main() {
     certification,
     score,
     confidence,
+    coverage,
     summary,
     findings,
     suppressed,
@@ -243,54 +250,8 @@ function scanFiles(files) {
     const rel = path.relative(targetRoot, file).replace(/\\/g, '/');
     const content = fs.readFileSync(file, 'utf8');
     const lines = content.split(/\r?\n/);
-
-    lines.forEach((line, index) => {
-      const lineNumber = index + 1;
-
-      if (/NEXT_PUBLIC_.*(SERVICE|SECRET|PRIVATE|ADMIN|PASSWORD)/i.test(line)) {
-        addFinding('Critico', 'S4', 'Secrets', rel, lineNumber, 'Sensitive-looking NEXT_PUBLIC variable exposed to client bundle.', 'Move the value to a server-only environment variable.');
-      }
-
-      if (/SUPABASE_SERVICE_ROLE|service_role/i.test(line) && isClientPath(rel)) {
-        addFinding('Critico', 'A1', 'Auth & Access', rel, lineNumber, 'Supabase service role reference appears in client-side code.', 'Use service role only in server routes or server actions.');
-      }
-
-      if (/dangerouslySetInnerHTML/.test(line)) {
-        addFinding('Critico', 'I3', 'Injection', rel, lineNumber, 'React dangerouslySetInnerHTML can create XSS if content is user-controlled.', 'Render text normally or sanitize HTML with a reviewed sanitizer.');
-      }
-
-      if (shouldFlagInnerHtml(lines, index)) {
-        addFinding('Alto', 'I2', 'Injection', rel, lineNumber, 'innerHTML assignment can create DOM XSS.', 'Use textContent or sanitize trusted HTML before inserting it.');
-      }
-
-      if (/\beval\s*\(|setTimeout\s*\([^,)]*(req|query|body|input|message)/.test(line)) {
-        addFinding('Critico', 'I4', 'Injection', rel, lineNumber, 'External input appears to reach code execution.', 'Remove eval-like execution and validate input with a schema.');
-      }
-
-      if (/Access-Control-Allow-Origin['"]?\s*,?\s*value:\s*['"]\*/.test(line) || /origin\s*:\s*['"]\*/.test(line)) {
-        addFinding('Alto', 'H4', 'Headers & CORS', rel, lineNumber, 'CORS allows every origin.', 'Use an explicit origin allowlist.');
-      }
-
-      if (/Access-Control-Allow-Credentials['"]?\s*,?\s*value:\s*['"]true/.test(line) || /credentials\s*:\s*true/.test(line)) {
-        gates.push({
-          id: 'H4',
-          status: 'WARN',
-          evidence: `${rel}:${lineNumber}`,
-          note: 'Credentials are enabled; open CORS becomes critical if paired with wildcard origin.'
-        });
-      }
-
-      if (/error\.stack|err\.stack/.test(line)) {
-        addFinding('Alto', 'S7', 'Secrets', rel, lineNumber, 'Stack trace appears in client-visible error response.', 'Log internal details server-side and return a generic error.');
-      }
-
-      if (/\.eq\(['"]id['"],\s*params\.id\)/.test(line)) {
-        const context = lines.slice(Math.max(0, index - 8), Math.min(lines.length, index + 8)).join('\n');
-        if (!/user_id|owner|auth\.|getServerSession|getUser|session/.test(context)) {
-          addFinding('Alto', 'A3', 'Auth & Access', rel, lineNumber, 'ID lookup does not show an ownership/auth check nearby.', 'Add ownership filtering such as user_id = authenticated user id.');
-        }
-      }
-    });
+    const language = languageFor(path.extname(file));
+    runRules({ rules: DETECTION_RULES, language, rel, lines, addFinding, gates });
   }
 }
 
@@ -327,7 +288,7 @@ function scanLockfile(hasPackageJson) {
   }
 }
 
-function addFinding(severity, checkId, vector, file, line, description, fix) {
+function addFinding(severity, checkId, vector, file, line, description, fix, fixPack) {
   const rule = ruleFor(checkId);
   const finding = {
     severity,
@@ -343,7 +304,8 @@ function addFinding(severity, checkId, vector, file, line, description, fix) {
     line,
     description,
     impact: impactFor(severity),
-    recommendation: fix
+    recommendation: fix,
+    fixPack: fixPack || null
   };
   finding.fingerprint = fingerprintFor(finding);
   finding.baseline = baselineFingerprints.has(finding.fingerprint);
@@ -357,10 +319,11 @@ function addFinding(severity, checkId, vector, file, line, description, fix) {
         expires: suppression.expires || null
       }
     });
-    return;
+    return null;
   }
 
   findings.push(finding);
+  return finding;
 }
 
 function findSuppression(finding) {
@@ -416,6 +379,7 @@ function fingerprintFor(finding) {
   return [
     finding.checkId,
     normalizePath(finding.file),
+    String(finding.line || ''),
     String(finding.description).trim().toLowerCase()
   ].join('|');
 }
@@ -431,7 +395,18 @@ function calculateScore(summary) {
   return Math.max(0, Number(score.toFixed(1)));
 }
 
-function calculateConfidence(summary) {
+function calculateConfidence(summary, coverage) {
+  if (coverage && coverage.gaps && coverage.gaps.length > 0) return 'Baixa';
+  if (coverage && (!coverage.supported || coverage.supported.length === 0)) return 'Baixa';
+  // Any blind edge in the taint pass lowers confidence, REGARDLESS of whether the
+  // deep pass ran. This separates "no Python to analyze" (blindEdges===0 → no
+  // penalty, can still be Alta) from "Python we could NOT analyze" (blindEdges>0,
+  // e.g. parser unavailable, or a lost trace → never Alta). This condition subsumes
+  // the old `ran===true && blindEdges>0` clause.
+  if (coverage && coverage.taint && coverage.taint.blindEdges > 0) {
+    if (summary.unknown > 1) return 'Baixa';
+    return 'Media';
+  }
   if (summary.unknown > 4) return 'Baixa';
   if (summary.unknown > 1) return 'Media';
   return 'Alta';
